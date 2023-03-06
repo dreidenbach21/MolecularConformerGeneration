@@ -214,7 +214,7 @@ def create_pooling_graph(dgl_graph, frag_ids, latent_dim = 64, use_mean_node_fea
     return graph
         
 
-def conditional_coarsen_3d(dgl_graph, frag_ids, cg_map, radius=4, max_neighbors=None, latent_dim = 64, use_mean_node_features = True):
+def conditional_coarsen_3d(dgl_graph, frag_ids, cg_map, radius=4, max_neighbors=None, latent_dim_D = 64, latent_dim_F = 32,  use_mean_node_features = True):
     num_nodes = len(frag_ids)
     coords = []
     # if use_mean_node_features:
@@ -270,13 +270,13 @@ def conditional_coarsen_3d(dgl_graph, frag_ids, cg_map, radius=4, max_neighbors=
     assert len(dist_list) == len(dst_list)
     graph = dgl.graph((torch.tensor(src_list), torch.tensor(dst_list)), num_nodes=num_nodes, idtype=torch.int32)
 
-    graph.ndata['feat'] = torch.zeros((num_nodes, latent_dim))
-    graph.ndata['feat_pool'] = torch.zeros((num_nodes, latent_dim)) # for ECN updates
+    graph.ndata['feat'] = torch.zeros((num_nodes, latent_dim_D))
+    graph.ndata['feat_pool'] = torch.zeros((num_nodes, latent_dim_D)) # for ECN updates
     graph.edata['feat'] = distance_featurizer(dist_list, 0.75)  # avg distance = 1.3 So divisor = (4/7)*1.3 = ~0.75
     graph.ndata['x'] = torch.from_numpy(np.array(coords).astype(np.float32))
     graph.ndata['x_pool'] = torch.from_numpy(np.array(coords).astype(np.float32))
     graph.ndata['mu_r_norm'] = torch.from_numpy(np.array(mean_norm_list).astype(np.float32))
-    graph.ndata['v'] = torch.zeros((num_nodes, latent_dim, 3))
+    graph.ndata['v'] = torch.zeros((num_nodes, latent_dim_F, 3))
     graph.ndata['M'] = torch.from_numpy(np.array(M).astype(np.float32))
     return graph
 

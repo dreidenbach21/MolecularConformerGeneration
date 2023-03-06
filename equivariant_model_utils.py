@@ -8,7 +8,7 @@ def glorot_init(shape):
 
 class Scalar_Linear(nn.Module):
     def __init__(self, in_dim, out_dim, activation=torch.nn.SiLU()):
-        super(Scalar_Neuron, self).__init__()
+        super(Scalar_Linear, self).__init__()
         self.in_dim = in_dim
         self.out_dim = out_dim
         self.activation=activation
