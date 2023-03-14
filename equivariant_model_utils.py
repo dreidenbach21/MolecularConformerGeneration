@@ -30,13 +30,31 @@ class Scalar_Linear(nn.Module):
     #     output = activation(output)
     #     return output.reshape(output_shape)
 
-class Vector_Neuron(nn.Module):
-    def __init__(self, Q_in, Q_out, K_in, K_out, leaky = False, alpha = 0.3):
-        super(Vector_Neuron, self).__init__()
+class Scalar_MLP(nn.Module):
+    def __init__(self, in_dim, mid_dim, out_dim, activation=torch.nn.SiLU()):
+        super(Scalar_MLP, self).__init__()
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+        self.activation=activation
+        self.linear = nn.Linear(in_dim, mid_dim)
+        self.linear2 = nn.Linear(mid_dim, out_dim)
+
+    def forward(self, x):
+        output_shape = list(x.size())
+        output_shape[-1] = self.out_dim
+        x = x.reshape(-1, x.shape[-1])
+        y = self.linear(x)
+        y = self.activation(y)
+        y = self.linear2(y)
+        return y.reshape(output_shape)
+
+class Vector_Relu(nn.Module):
+    def __init__(self, W_in, W_out, leaky = True, alpha = 0.2):
+        super(Vector_Relu, self).__init__()
         # self.Q_weight = nn.Parameter(glorot_init([input_vec_size + v_dim, input_vec_size + v_dim]))
         # self.K_weight = nn.Parameter(glorot_init([input_vec_size + v_dim, input_vec_size + v_dim]))
-        self.Q_weight = nn.Parameter(glorot_init([Q_in, Q_out]))
-        self.K_weight = nn.Parameter(glorot_init([K_in, K_out]))
+        self.Q_weight = nn.Parameter(glorot_init([W_in, W_out]))
+        self.K_weight = nn.Parameter(glorot_init([W_in, W_out]))
         self.leaky = leaky
         self.eps = 1e-7
         self.alpha = alpha
@@ -46,7 +64,6 @@ class Vector_Neuron(nn.Module):
         output_shape[-2] = self.Q_weight.size(1)
         input = input.reshape([-1, input.size(-2), input.size(-1)])
         input = torch.transpose(input, -1, -2)
-        # output = torch.matmul(input, weight)
         Q = torch.matmul(input, self.Q_weight)
         K = torch.matmul(input, self.K_weight)
         inner_product = torch.einsum('nic,  nic->nc', Q, K)
@@ -60,7 +77,7 @@ class Vector_Neuron(nn.Module):
             return self.alpha * input.reshape(output_shape) + (1 - self.alpha) * output.reshape(output_shape)
         return output.reshape(output_shape)
 
-    # def vector_neuron(input, Q_weight, K_weight):
+    # def Vector_Relu(input, Q_weight, K_weight):
     #     output_shape = list(input.size())
     #     output_shape[-2] = Q_weight.size(1)
     #     input = input.reshape([-1, input.size(-2), input.size(-1)])
@@ -76,7 +93,7 @@ class Vector_Neuron(nn.Module):
     #     output = torch.transpose(output, -1, -2)
     #     return output.reshape(output_shape)
 
-    # def vector_neuron_leaky(self, input, Q_weight, K_weight, alpha=0.3):
+    # def Vector_Relu_leaky(self, input, Q_weight, K_weight, alpha=0.3):
     #     output_shape = list(input.size())
     #     output_shape[-2] = Q_weight.size(1)
     #     input = input.reshape([-1, input.size(-2), input.size(-1)])
@@ -120,20 +137,44 @@ class Vector_Linear(nn.Module):
     #     return output.reshape(output_shape)
 
 class Vector_MLP(nn.Module):
-    def __init__(self, Q_in, Q_out, K_in, K_out, in_dim, out_dim, leaky = False, alpha = 0.3):
+    def __init__(self, W_in, W_out, in_dim, out_dim, leaky = True, alpha = 0.2, use_batchnorm = True):
         super(Vector_MLP, self).__init__()
-        self.vneuron = Vector_Neuron(Q_in, Q_out, K_in, K_out, leaky = False, alpha = 0.3)
+        assert(W_out == in_dim)
+        self.vector_relu = Vector_Relu(W_in, W_out, leaky = leaky, alpha = alpha)
+        self.use_batchnorm = use_batchnorm
+        if self.use_batchnorm:
+            self.batchnorm = VNBatchNorm(in_dim)
         self.vlinear = Vector_Linear(in_dim, out_dim)
 
     def forward(self, input):
-        hidden = self.vneuron(input)
+        hidden = self.vector_relu(input)
+        if self.use_batchnorm == True:
+            hidden = self.batchnorm(hidden)
         output = self.vlinear(hidden)
         return output
 
     # def fully_connected_vec(self, vec, non_linear_Q, non_linear_K, output_weight, activation='leaky_relu'):
     #     # if activation == 'leaky_relu':
-    #     hidden = self.vector_neuron_leaky(vec, non_linear_Q, non_linear_K)
+    #     hidden = self.Vector_Relu_leaky(vec, non_linear_Q, non_linear_K)
     #     # else:
-    #         # hidden = vector_neuron(vec, non_linear_Q, non_linear_K)
+    #         # hidden = Vector_Relu(vec, non_linear_Q, non_linear_K)
     #     output = self.vector_linear(hidden, output_weight)
     #     return output
+
+class VNBatchNorm(nn.Module):
+    def __init__(self, num_features):
+        super(VNBatchNorm, self).__init__()
+        self.bn = nn.BatchNorm1d(num_features)
+        self.eps = 1e-7
+    
+    def forward(self, x):
+        '''
+        x: point features of shape [B, N_feat, 3]
+        '''
+        # norm = torch.sqrt((x*x).sum(2))
+        norm = torch.norm(x, dim=2) + self.eps
+        norm_bn = self.bn(norm)
+        norm = norm.unsqueeze(2)
+        norm_bn = norm_bn.unsqueeze(2)
+        x = x / norm * norm_bn
+        return x

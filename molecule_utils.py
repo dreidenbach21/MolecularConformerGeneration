@@ -63,10 +63,43 @@ def get_torsions_geo(mol_list):
         atom_counter += m.GetNumAtoms()
     return torsionList
 
-def mol2graph(mol, name = "test", radius=4, max_neighbors=None):
+def autoregressive_bfs(ids, bmap, a=1.0, b=1.1):
+    if len(ids) == 1:
+        return [0]
+    scores = {}
+    start = -1
+    max_score = 0
+    for k, val in bmap.items():
+        sc = len(ids[k])*a + len(val)*b
+        scores[k] = sc
+        max_score = max(max_score, sc)
+        if max_score == sc:
+            start = k
+    order = []
+    queue = [start]
+    seen = set(queue)
+    while len(queue) > 0:
+        cur = queue.pop(0)
+        order.append(cur)
+        kids = [x for x in bmap[cur] if x not in seen]
+        if len(kids) == 0:
+            continue
+        for k in kids:
+            seen.add(k)
+        kids = [x for _, x in sorted(zip([scores[y] for y in kids], kids), key=lambda pair: pair[0], reverse = True)]
+        queue.extend(kids)
+    return order
+
+def mol2graph(mol, name = "test", radius=4, max_neighbors=None, use_rdkit_coords = False):
     conf = mol.GetConformer()
     true_lig_coords = conf.GetPositions()
-    lig_coords = true_lig_coords
+    if use_rdkit_coords:
+        rdkit_coords = get_rdkit_coords(mol) #.numpy()
+        R, t = rigid_transform_Kabsch_3D(rdkit_coords.T, true_lig_coords.T)
+        lig_coords = ((R @ (rdkit_coords).T).T + t.squeeze())
+        print('kabsch RMSD between rdkit ligand and true ligand is ', np.sqrt(np.sum((lig_coords - true_lig_coords) ** 2, axis=1).mean()).item())
+    else:
+        lig_coords = true_lig_coords
     num_nodes = lig_coords.shape[0]
     assert lig_coords.shape[1] == 3
     distance = spa.distance.cdist(lig_coords, lig_coords)
@@ -105,6 +138,8 @@ def mol2graph(mol, name = "test", radius=4, max_neighbors=None):
     graph = dgl.graph((torch.tensor(src_list), torch.tensor(dst_list)), num_nodes=num_nodes, idtype=torch.int32)
 
     graph.ndata['feat'] = lig_atom_featurizer(mol)
+    if use_rdkit_coords:
+        graph.ndata['rd_feat'] = graph.ndata['feat']
     graph.edata['feat'] = distance_featurizer(dist_list, 0.75)  # avg distance = 1.3 So divisor = (4/7)*1.3 = ~0.75
     graph.ndata['x'] = torch.from_numpy(np.array(true_lig_coords).astype(np.float32))
     graph.ndata['mu_r_norm'] = torch.from_numpy(np.array(mean_norm_list).astype(np.float32))
@@ -143,7 +178,7 @@ def coarsen_molecule(m):
             cg_bonds.append((min(A,B), max(A,B)))
         return list(frags), frag_ids, adj, out, bond_break, cg_bonds, cg_map
     else:
-        return [m], [0], Chem.rdmolops.GetAdjacencyMatrix(m), m, [], None, None
+        return [m], [list(range(m.GetNumAtoms()))], Chem.rdmolops.GetAdjacencyMatrix(m), m, [], None, None
 
 def create_pooling_graph(dgl_graph, frag_ids, latent_dim = 64, use_mean_node_features=True):
     N = len(frag_ids)
@@ -175,33 +210,23 @@ def create_pooling_graph(dgl_graph, frag_ids, latent_dim = 64, use_mean_node_fea
     dist_list = []
     # mean_norm_list = [np.zeros((5,))]*n
     
-    prev = 0
-    for cg_bead in range(n, n+N):
-        src = [prev + i for i in range(0, chunks[cg_bead-n])]
+    # prev = 0
+    # for cg_bead in range(n, n+N):
+    #     src = [prev + i for i in range(0, chunks[cg_bead-n])]
+    #     dst = [cg_bead]*len(src)
+    #     prev += len(src)
+    #     src_list.extend(src)
+    #     dst_list.extend(dst)
+    #     valid_dist = list(distance[src, cg_bead])
+    #     dist_list.extend(valid_dist)
+    for idx, cg_bead in enumerate(list(range(n, n+N))):
+        src = list(frag_ids[idx])
         dst = [cg_bead]*len(src)
-        prev += len(src)
         src_list.extend(src)
         dst_list.extend(dst)
-        
         valid_dist = list(distance[src, cg_bead])
-        # print("\nd", cg_bead, src)
         dist_list.extend(valid_dist)
-        # if len(src) <= 1:
-        #      mean_norm_list.append([0,0,0,0,0])
-        # else:
-        #     valid_dist_np = distance[src, cg_bead]
-        #     # print("V", valid_dist_np)
-        #     sigma = np.array([1., 2., 5., 10., 30.]).reshape((-1, 1))
-        #     weights = softmax(- valid_dist_np.reshape((1, -1)) ** 2 / sigma, axis=1)  # (sigma_num, neigh_num)
-        #     # print("W", weights)
-        #     assert weights[0].sum() > 1 - 1e-2 and weights[0].sum() < 1.01
-        #     diff_vecs = coords[src, :] - coords[dst, :]  # (neigh_num, 3)
-        #     mean_vec = weights.dot(diff_vecs)  # (sigma_num, 3)
-        #     denominator = weights.dot(np.linalg.norm(diff_vecs, axis=1))  # (sigma_num,)
-        #     # print("D",denominator)
-        #     mean_vec_ratio_norm = np.linalg.norm(mean_vec, axis=1) / denominator  # (sigma_num,)
-        #     # print("M", mean_vec_ratio_norm)
-        #     mean_norm_list.append(mean_vec_ratio_norm)
+
         
     graph = dgl.graph((torch.tensor(src_list), torch.tensor(dst_list)), num_nodes=n+N, idtype=torch.int32)
 
@@ -220,44 +245,34 @@ def conditional_coarsen_3d(dgl_graph, frag_ids, cg_map, radius=4, max_neighbors=
     # if use_mean_node_features:
     #     latent_dim += 5
     M = np.zeros((num_nodes, dgl_graph.ndata['x'].shape[0]))
+    Mmap = np.zeros((num_nodes,1))
     for bead, atom_ids in enumerate(frag_ids):
         subg = list(atom_ids)
         subg.sort()
         coords.append(dgl_graph.ndata['x'][subg,:].mean(dim=0).cpu().numpy())
         M[bead, list(atom_ids)] = 1
+        Mmap[bead, 0] = len(list(atom_ids))
         # TODO can scale by MW weighted_average = (A@W)/W.sum()
 #         print(subg, coords[0].shape, coords)
-    
+    bfs_order = autoregressive_bfs(frag_ids, cg_map)
+    bfs = np.zeros((num_nodes,1))
+    for order_idx, bead in enumerate(bfs_order): # step 0 --> N
+        bfs[bead, 0] = order_idx
+
     coords = np.asarray(coords)
     distance = spa.distance.cdist(coords, coords)
     src_list = []
     dst_list = []
     dist_list = []
     mean_norm_list = []
-    for i in range(num_nodes):
-        dst = list(np.where(distance[i, :] < radius)[0])
-        dst.remove(i)
-        if max_neighbors != None and len(dst) > max_neighbors:
-            dst = list(np.argsort(distance[i, :]))[1: max_neighbors + 1]  # closest would be self loop
-        if len(dst) == 0:
-            dst = list(np.argsort(distance[i, :]))[1:2]  # closest would be the index i itself > self loop
-            log(
-                f'The lig_radius {radius} was too small for one lig atom such that it had no neighbors. So we connected {i} to the closest other lig atom {dst}')
-        assert i not in dst
-        assert dst != []
-        
-        required_dst = cg_map[i]
-        for d in required_dst:
-            if d not in dst:
-                print("[Required] adding CG edge")
-                dst.append(d)
-        
-        src = [i] * len(dst)
+    if num_nodes == 1:
+        src = [0]
+        dst = [0]
         src_list.extend(src)
         dst_list.extend(dst)
-        valid_dist = list(distance[i, dst])
+        valid_dist = list(distance[0, dst])
         dist_list.extend(valid_dist)
-        valid_dist_np = distance[i, dst]
+        valid_dist_np = distance[0, dst]
         sigma = np.array([1., 2., 5., 10., 30.]).reshape((-1, 1))
         weights = softmax(- valid_dist_np.reshape((1, -1)) ** 2 / sigma, axis=1)  # (sigma_num, neigh_num)
         assert weights[0].sum() > 1 - 1e-2 and weights[0].sum() < 1.01
@@ -266,18 +281,53 @@ def conditional_coarsen_3d(dgl_graph, frag_ids, cg_map, radius=4, max_neighbors=
         denominator = weights.dot(np.linalg.norm(diff_vecs, axis=1))  # (sigma_num,)
         mean_vec_ratio_norm = np.linalg.norm(mean_vec, axis=1) / denominator  # (sigma_num,)
         mean_norm_list.append(mean_vec_ratio_norm)
+    else:
+        for i in range(num_nodes):
+            dst = list(np.where(distance[i, :] < radius)[0])
+            dst.remove(i)
+            if max_neighbors != None and len(dst) > max_neighbors:
+                dst = list(np.argsort(distance[i, :]))[1: max_neighbors + 1]  # closest would be self loop
+            if len(dst) == 0:
+                dst = list(np.argsort(distance[i, :]))[1:2]  # closest would be the index i itself > self loop
+                log(
+                    f'The lig_radius {radius} was too small for one lig atom such that it had no neighbors. So we connected {i} to the closest other lig atom {dst}')
+            assert i not in dst
+            assert dst != []
+            
+            required_dst = cg_map[i]
+            for d in required_dst:
+                if d not in dst:
+                    print("[Required] adding CG edge")
+                    dst.append(d)
+            
+            src = [i] * len(dst)
+            src_list.extend(src)
+            dst_list.extend(dst)
+            valid_dist = list(distance[i, dst])
+            dist_list.extend(valid_dist)
+            valid_dist_np = distance[i, dst]
+            sigma = np.array([1., 2., 5., 10., 30.]).reshape((-1, 1))
+            weights = softmax(- valid_dist_np.reshape((1, -1)) ** 2 / sigma, axis=1)  # (sigma_num, neigh_num)
+            assert weights[0].sum() > 1 - 1e-2 and weights[0].sum() < 1.01
+            diff_vecs = coords[src, :] - coords[dst, :]  # (neigh_num, 3)
+            mean_vec = weights.dot(diff_vecs)  # (sigma_num, 3)
+            denominator = weights.dot(np.linalg.norm(diff_vecs, axis=1))  # (sigma_num,)
+            mean_vec_ratio_norm = np.linalg.norm(mean_vec, axis=1) / denominator  # (sigma_num,)
+            mean_norm_list.append(mean_vec_ratio_norm)
     assert len(src_list) == len(dst_list)
     assert len(dist_list) == len(dst_list)
     graph = dgl.graph((torch.tensor(src_list), torch.tensor(dst_list)), num_nodes=num_nodes, idtype=torch.int32)
 
     graph.ndata['feat'] = torch.zeros((num_nodes, latent_dim_D))
-    graph.ndata['feat_pool'] = torch.zeros((num_nodes, latent_dim_D)) # for ECN updates
+    # graph.ndata['feat_pool'] = torch.zeros((num_nodes, latent_dim_D)) # for ECN updates
     graph.edata['feat'] = distance_featurizer(dist_list, 0.75)  # avg distance = 1.3 So divisor = (4/7)*1.3 = ~0.75
     graph.ndata['x'] = torch.from_numpy(np.array(coords).astype(np.float32))
-    graph.ndata['x_pool'] = torch.from_numpy(np.array(coords).astype(np.float32))
+    # graph.ndata['x_pool'] = torch.from_numpy(np.array(coords).astype(np.float32))
     graph.ndata['mu_r_norm'] = torch.from_numpy(np.array(mean_norm_list).astype(np.float32))
     graph.ndata['v'] = torch.zeros((num_nodes, latent_dim_F, 3))
-    graph.ndata['M'] = torch.from_numpy(np.array(M).astype(np.float32))
+    # graph.ndata['M'] = torch.from_numpy(np.array(M).astype(np.float32))
+    graph.ndata['cg_to_fg'] = torch.from_numpy(np.array(Mmap).astype(np.float32))
+    graph.ndata['bfs'] = torch.from_numpy(np.array(bfs).astype(np.float32))
     return graph
 
 def get_coords(rd_mol):

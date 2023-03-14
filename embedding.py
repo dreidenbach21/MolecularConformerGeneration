@@ -283,18 +283,22 @@ def get_coarse_geometry_graph(graph, cg_map): # 2 Hop Distances
     edges_src = []
     edges_dst = []
     N = coords.shape[0]
-    for src_idx in range(N):
-        one_hop_dsts = [neighbor for neighbor in  cg_map[src_idx]] #list(atom.GetNeighbors())]
-        two_and_one_hop_idx = [neighbor for neighbor in one_hop_dsts]
-        for one_hop_dst in one_hop_dsts:
-            for two_hop_dst in cg_map[one_hop_dst]:#one_hop_dst.GetNeighbors():
-                two_and_one_hop_idx.append(two_hop_dst)
-        all_dst_idx = list(set(two_and_one_hop_idx))
-        if len(all_dst_idx) ==0: continue
-        all_dst_idx.remove(src_idx)
-        all_src_idx = [src_idx] *len(all_dst_idx)
-        edges_src.extend(all_src_idx)
-        edges_dst.extend(all_dst_idx)
+    if N == 1:
+        edges_src.extend([0])
+        edges_dst.extend([0])
+    else:
+        for src_idx in range(N):
+            one_hop_dsts = [neighbor for neighbor in  cg_map[src_idx]] #list(atom.GetNeighbors())]
+            two_and_one_hop_idx = [neighbor for neighbor in one_hop_dsts]
+            for one_hop_dst in one_hop_dsts:
+                for two_hop_dst in cg_map[one_hop_dst]:#one_hop_dst.GetNeighbors():
+                    two_and_one_hop_idx.append(two_hop_dst)
+            all_dst_idx = list(set(two_and_one_hop_idx))
+            if len(all_dst_idx) ==0: continue
+            all_dst_idx.remove(src_idx)
+            all_src_idx = [src_idx] *len(all_dst_idx)
+            edges_src.extend(all_src_idx)
+            edges_dst.extend(all_dst_idx)
     graph = dgl.graph((torch.tensor(edges_src), torch.tensor(edges_dst)), num_nodes=N, idtype=torch.long)
     graph.edata['feat'] = torch.from_numpy(np.linalg.norm(coords[edges_src] - coords[edges_dst], axis=1).astype(np.float32))
     return graph
