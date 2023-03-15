@@ -80,7 +80,7 @@ class IEGMN_Bidirectional_Layer(nn.Module):
         self.weight_sharing = weight_sharing
 
         # EDGES
-        A_edge_mlp_input_dim = (invar_feats_dim_h * 2) + A_input_edge_feats_dim
+        A_edge_mlp_input_dim = (invar_feats_dim_h * 2) #+ A_input_edge_feats_dim #! removed the edge features
         if self.use_dist_in_layers:# and self.A_evolve: #TRUE and TRUE
             A_edge_mlp_input_dim += len(self.all_sigmas_dist)
         # if self.standard_norm_order: # TRUE
@@ -95,7 +95,7 @@ class IEGMN_Bidirectional_Layer(nn.Module):
         if self.weight_sharing:
             self.B_edge_mlp = self.A_edge_mlp
         else:
-            B_edge_mlp_input_dim = (invar_feats_dim_h * 2) + B_input_edge_feats_dim
+            B_edge_mlp_input_dim = (invar_feats_dim_h * 2) #+ B_input_edge_feats_dim
             if self.use_dist_in_layers:# and self.B_evolve:
                 B_edge_mlp_input_dim += len(self.all_sigmas_dist)
             # if self.standard_norm_order:
@@ -214,7 +214,7 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             x_rel_mag = torch.sum(x_rel_mag, dim=1, keepdim=True)
             x_rel_mag = torch.cat([torch.exp(-x_rel_mag / sigma) for sigma in self.all_sigmas_dist], dim=-1)
             return {'msg_cc': self.A_edge_mlp(
-                torch.cat([edges.src['feat_cc'], edges.dst['feat_cc'], edges.data['feat'], x_rel_mag], dim=1))} # operates with edge features in it and node features
+                torch.cat([edges.src['feat_cc'], edges.dst['feat_cc'], x_rel_mag], dim=1))} # edges.data['feat'], x_rel_mag], dim=1))} # operates with edge features in it and node features
         else:
             return {
                 'msg_cc': self.A_edge_mlp(torch.cat([edges.src['feat_cc'], edges.dst['feat_cc'], edges.data['feat']], dim=1))} #TODO: fix edge data what signal do we use?
@@ -225,7 +225,7 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             x_rel_mag = torch.sum(x_rel_mag, dim=1, keepdim=True)
             x_rel_mag = torch.cat([torch.exp(-x_rel_mag / sigma) for sigma in self.all_sigmas_dist], dim=-1)
             return {'msg_cc': self.B_edge_mlp(
-                torch.cat([edges.src['feat_cc'], edges.dst['feat_cc'], edges.data['feat'], x_rel_mag], dim=1))}
+                torch.cat([edges.src['feat_cc'], edges.dst['feat_cc'], x_rel_mag], dim=1))}
         else:
             return {
                 'msg_cc': self.B_edge_mlp(torch.cat([edges.src['feat_cc'], edges.dst['feat_cc'], edges.data['feat']], dim=1))}
@@ -663,7 +663,6 @@ class IEGMN_Bidirectional(nn.Module):
         full_trajectory = [coords_A.detach().cpu()]
         geom_losses = 0
         for i, layer in enumerate(self.iegmn_layers):
-            if self.debug: log('layer ', i)
             coords_A, \
             h_feats_A, \
             coords_B, \

@@ -141,7 +141,8 @@ def mol2graph(mol, name = "test", radius=4, max_neighbors=None, use_rdkit_coords
     if use_rdkit_coords:
         graph.ndata['rd_feat'] = graph.ndata['feat']
     graph.edata['feat'] = distance_featurizer(dist_list, 0.75)  # avg distance = 1.3 So divisor = (4/7)*1.3 = ~0.75
-    graph.ndata['x'] = torch.from_numpy(np.array(true_lig_coords).astype(np.float32))
+    graph.ndata['x'] = torch.from_numpy(np.array(lig_coords).astype(np.float32)) #! this should be the current coords not always ground truth
+    graph.ndata['x_ref'] = torch.from_numpy(np.array(lig_coords).astype(np.float32))
     graph.ndata['mu_r_norm'] = torch.from_numpy(np.array(mean_norm_list).astype(np.float32))
     return graph
 
@@ -176,7 +177,12 @@ def coarsen_molecule(m):
             cg_map[A].append(B)
             cg_map[B].append(A)
             cg_bonds.append((min(A,B), max(A,B)))
-        return list(frags), frag_ids, adj, out, bond_break, cg_bonds, cg_map
+        
+        bond_break_map = defaultdict(list) # TODO can expand to torsion info as well
+        for b,c in bond_break:
+            bond_break_map[b].append(c)
+            bond_break_map[c].append(b)
+        return list(frags), frag_ids, adj, out, bond_break_map, cg_bonds, cg_map
     else:
         return [m], [list(range(m.GetNumAtoms()))], Chem.rdmolops.GetAdjacencyMatrix(m), m, [], None, None
 

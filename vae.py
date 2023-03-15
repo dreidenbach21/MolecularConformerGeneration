@@ -2,7 +2,14 @@ from ecn_3d import *
 from equivariant_model_utils import *
 from decoder_utils import IEGMN_Bidirectional
 from collections import defaultdict
+import numpy as np
+import copy
 import ipdb
+
+# class BigGraph:
+#     def __init__(self, g, node_map):
+#         self.graph = g
+#         self.node_map = node_map
 
 class Encoder(nn.Module):
     def __init__(self, ecn, D, F):
@@ -156,7 +163,7 @@ class Decoder(nn.Module):
         # coords_A held in latent.ndata['x_now']
         return  coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory
 
-    def split_subgraph(self, X, H, fine, frag_ids, bfs_order, start = 0):
+    def split_subgraph_nodes(self, X, H, fine, frag_ids, bfs_order, bond_breaks, start = 0):
         # ipdb.set_trace()
         result = []
         for idx, atom_ids in enumerate(frag_ids):
@@ -165,53 +172,218 @@ class Decoder(nn.Module):
             coords = X[atom_ids, :]
             feats = H[atom_ids, :]
             # result.append( (coords, feats, bfs_order[idx]))
-            subg = fine.subgraph(og_atom_ids)
+            # subg = fine.subgraph(og_atom_ids)
+            # ipdb.set_trace()
+            subg = dgl.node_subgraph(fine, og_atom_ids) #, relabel_nodes = False) #! relabel does not work but we do have "_ID"
             subg.ndata['x_cc'] = coords
             subg.ndata['feat_cc'] = feats #! here the rdkit Fine is being overwritten with the result of our attention operation as wanted
-            # TODO: must update the edge features.
             # TODO: better off creating a new function to create a subgraph instead of resetting stuff
             result.append( (subg, bfs_order[idx]))
         result.sort(key=lambda x: x[-1])
+
+        future_bonds = defaultdict(list)
+        sorted_frags = list(zip(frag_ids, bfs_order))
+        sorted_frags.sort(key = lambda d: d[1])
+        frags_ids = [x for x, y in sorted_frags]
+        u, v = fine.edges() # TODO can create live 4 angstrom cutoff
+        # ipdb.set_trace()
+        for idx, ab in enumerate(zip(u.tolist(), v.tolist())):
+            a, b = ab
+            a_check = [1 if a in check  else 0 for check in frags_ids]
+            b_check = [1 if b in check else 0 for check in frags_ids]
+            aa, bb = np.argmax(a_check), np.argmax(b_check)
+            if aa == bb:
+                continue
+            future_bonds[max(aa, bb)].append((a,b)) # this should include the bond_breaks
+        return result, future_bonds
+
+        def split_subgraph_edges(self, X, H, fine, frag_ids, bfs_order, bond_breaks, start = 0):
+            # ipdb.set_trace()
+            result = []
+            # TODO: 
+            return result, future_bonds
+    
+    def sort_ids(self, all_ids, all_order):
+        result = []
+        for ids, order in zip(all_ids, all_order):
+            sorted_frags = list(zip(ids, order))
+            sorted_frags.sort(key = lambda x: x[1])
+            frag_ids = [x for x, y in sorted_frags]
+            result.append(frag_ids)
         return result
 
+    def isolate_next_subgraph(self, final_molecule, id_batch):
+        molecules = dgl.unbatch(final_molecule)
+        result = []
+        valid = []
+        check = True
+        for idx, ids in enumerate(id_batch):
+            if ids is None:
+                valid.append((idx, False))
+                check = False
+                continue
+            else:
+                valid.append((idx, True))
+            fine = molecules[idx]
+            subg = dgl.node_subgraph(fine, ids)
+            result.append(subg)
+        return dgl.batch(result).to(self.device), valid, check
 
-    def forward(self, cg_mol_graph, rdkit_mol_graph, cg_frag_ids):
-        ipdb.set_trace()
+    
+    def gather_current_molecule(self, final_molecule, current_molecule_ids, progress):
+        if current_molecule_ids is None or len(current_molecule_ids) == 0: #or torch.sum(progress) == 0
+            return None
+        if torch.sum(progress) == 0:
+            return final_molecule
+        molecules = dgl.unbatch(final_molecule)
+        result = []
+        for idx, ids in enumerate(current_molecule_ids):
+            if progress[idx] == 0:
+                continue
+            fine = molecules[idx]
+            subg = dgl.node_subgraph(fine, ids)
+            result.append(subg)
+        return dgl.batch(result).to(self.device)
+
+    def update_molecule(self, final_molecule, id_batch, coords_A, h_feats_A, latent):
+        num_nodes = final_molecule.batch_num_nodes()
+        start = 0
+        prev = 0
+        for idx, ids in enumerate(id_batch):
+            if ids is None:
+                start += num_nodes[idx]
+                continue
+            updated_ids = [start + x for x in ids]
+            start += num_nodes[idx]
+            cids = [prev + i for i in range(len(ids))]
+            prev += len(ids)
+
+            final_molecule.ndata['x_cc'][updated_ids, :] = coords_A[cids, :]
+            final_molecule.ndata['feat_cc'][updated_ids, :] = h_feats_A[cids, :]
+            
+    def adaptive_batching(self, current_molecule, valid):
+        molecules = dgl.unbatch(current_molecule)
+        result = []
+        for idx, val in valid:
+            if val:
+                result.append(molecules[idx])
+        return dgl.batch(result).to(self.device)
+
+    def forward(self, cg_mol_graph, rdkit_mol_graph, cg_frag_ids, bond_breaks):
+        # ipdb.set_trace()
+        rdkit_reference = copy.deepcopy(rdkit_mol_graph)
         X_cc, H_cc = self.channel_selection(cg_mol_graph, rdkit_mol_graph, cg_frag_ids)
-
-        ACGs = dgl.unbatch(cg_mol_graph) # list of graphs
-        Bs = dgl.unbatch(rdkit_mol_graph)
-        subgraphs = []
-        bulk_atoms = 0
-        for idx in range(len(Bs)):
-            subgraphs.append(self.split_subgraph(X_cc, H_cc, Bs[idx], cg_frag_ids[idx], ACGs[idx].ndata['bfs'].flatten(), start = bulk_atoms))
-            bulk_atoms += Bs[idx].num_nodes()
-        # ipdb.set_trace()
-        ar_batches = defaultdict(list)
-        ar_batches_prev = defaultdict(list)
-        for sg in subgraphs:
-            for idx, val in enumerate(sg):
-                assert(idx == val[1])
-                ar_batches[idx].append(val[0])
-            for idx in range(1, len(sg)-1):
-                ar_batches_prev[idx].extend(ar_batches[idx-1])
-        dgl_ar_batches = [dgl.batch(ar_batches[k]) for k in range(len(ar_batches))]
-        # ipdb.set_trace()
-        dgl_ar_batches_prev = [dgl.batch(ar_batches_prev[k]) if len(ar_batches_prev[k]) > 0 else None for k in range(len(ar_batches_prev))]
+        rdkit_mol_graph.ndata['x_cc'] = X_cc
+        rdkit_mol_graph.ndata['feat_cc'] = H_cc
+        bfs = cg_mol_graph.ndata['bfs'].flatten()
+        bfs_order = []
+        start = 0
+        for i in cg_mol_graph.batch_num_nodes():
+            bfs_order.append(bfs[start : start + i])
+            start += i
         
-        for t in range(len(dgl_ar_batches)):
-            latent = dgl_ar_batches[t]
-            prev = dgl_ar_batches_prev[t] # TODO will have to figure out how to combine and propagate stuff later on instead just feeding in previous single subgraph
-            # TODO merge with valid graphs of latent t-1. design this better
-            # ! See dgl.merge and add_eges
+        # ipdb.set_trace()
+        progress = rdkit_mol_graph.batch_num_nodes().cpu()
+        final_molecule = rdkit_mol_graph
+        frag_ids = self.sort_ids(cg_frag_ids, bfs_order)
+        frag_batch = defaultdict(list) # keys will be time steps
+        max_nodes = max(cg_mol_graph.batch_num_nodes()).item()
+        for t in range(max_nodes):
+            for idx, frag in enumerate(frag_ids): # iterate over moelcules
+                ids = None
+                if t < len(frag):
+                    ids = list(frag[t])
+                frag_batch[t].append(ids)
 
-            #TODO weird edge error likely due to poor data creation
-            coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory = self.autoregressive_step(latent, prev, t) # TODO: implent distance reularization with ground truth distance graph
-            ipdb.set_trace()
-            latent.ndata['x_cc'] = coords_A
-            latent.ndata['feat_cc'] = h_feats_A
-            # prev = latent
-        return dgl_ar_batches
+        # ipdb.set_trace()
+        current_molecule_ids = None
+        current_molecule = None
+        for t in range(max_nodes):
+            id_batch = frag_batch[t]
+            latent, valid, check = self.isolate_next_subgraph(final_molecule, id_batch)
+            # if not check:
+            #     current_molecule = self.adaptive_batching(current_molecule)
+            # ipdb.set_trace()
+            coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory = self.autoregressive_step(latent, current_molecule, t)
+            self.update_molecule(final_molecule, id_batch, coords_A, h_feats_A, latent)
+            progress -= torch.tensor([len(x) if x is not None else 0 for x in id_batch])
+            if t == 0:
+                current_molecule_ids = id_batch
+            else:
+                for idx, ids in enumerate(id_batch):
+                    if ids is None:
+                        continue
+                    # if t > 0:
+                    current_molecule_ids[idx].extend(ids)
+                #     progress[idx] -= len(ids)
+            # ipdb.set_trace() # erroring on dgl.unbatch(final_molecule) for some odd reason --> fixed by adding an else above
+            current_molecule = self.gather_current_molecule(final_molecule, current_molecule_ids, progress)
+
+        return final_molecule, rdkit_reference
+
+
+    # def forward_v1(self, cg_mol_graph, rdkit_mol_graph, cg_frag_ids, bond_breaks):
+    #     # ipdb.set_trace()
+    #     X_cc, H_cc = self.channel_selection(cg_mol_graph, rdkit_mol_graph, cg_frag_ids)
+    #     ACGs = dgl.unbatch(cg_mol_graph) # list of graphs
+    #     Bs = dgl.unbatch(rdkit_mol_graph)
+    #     subgraphs = []
+    #     bulk_atoms = 0
+    #     check_done = []
+    #     for idx in range(len(Bs)):
+    #         subgraphs.append(self.split_subgraph_nodes(X_cc, H_cc, Bs[idx], cg_frag_ids[idx], ACGs[idx].ndata['bfs'].flatten(), bond_breaks[idx], start = bulk_atoms))
+    #         bulk_atoms += Bs[idx].num_nodes()
+    #         check_done.append(Bs[idx].num_nodes())
+    #     check_done = torch.tensor(check_done)
+    #     idx_map = {i:i for i in range(len(check_done))}
+        
+    #     future_bonds = [x[1] for x in subgraphs]
+    #     subgraphs = [x[0] for x in subgraphs]
+    #     # ipdb.set_trace()
+    #     ar_batches = defaultdict(list)
+    #     # ar_batches_prev = defaultdict(list) # TODO: replace this with current molecule
+    #     current_molecule = None
+    #     mlen = max([len(x) for x in subgraphs])
+    #     # ipdb.set_trace()
+    #     for sg in subgraphs:
+    #         for idx, val in enumerate(sg):
+    #             assert(idx == val[1])
+    #             ar_batches[idx].append(val[0])
+    #         # for idx in range(len(sg), mlen):
+    #         #     ar_batches[idx].append(dgl.graph([])) # graph padding doe not work
+    #         # for idx in range(1, len(sg)-1):
+    #         #     ar_batches_prev[idx].extend(ar_batches[idx-1])
+    #     dgl_ar_batches = [dgl.batch(ar_batches[k]) for k in range(len(ar_batches))]
+    #     # ipdb.set_trace()
+    #     # aaa = dgl.unbatch(dgl_ar_batches[0])[0]
+    #     # aa = dgl.unbatch(dgl_ar_batches[1])[0]
+    #     # dgl_ar_batches_prev = [dgl.batch(ar_batches_prev[k]) if len(ar_batches_prev[k]) > 0 else None for k in range(len(ar_batches_prev))]
+    #     #TODO: figure out how to do the pruning of the current Molecule!!!!!!!!!!
+    #     final_molecules = {}
+    #     for t in range(len(dgl_ar_batches)):
+    #         latent = dgl_ar_batches[t]
+    #         prev = current_molecule
+    #         # TODO merge with valid graphs of latent t-1. design this better
+    #         # ! See dgl.merge and add_eges
+
+    #         #TODO weird edge error likely due to poor data creation
+    #         coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory = self.autoregressive_step(latent, prev, t) # TODO: implent distance reularization with ground truth distance graph
+    #         ipdb.set_trace()
+    #         latent.ndata['x_cc'] = coords_A
+    #         latent.ndata['feat_cc'] = h_feats_A
+    #         current_molecule = latent
+    #         # TODO: check _ID of latent to see waht happens
+    #         progress = latent.batch_num_nodes().cpu()
+    #         check_done -= progress
+    #         print(check_done)
+    #         # TODO
+    #         # current_moleculcheck_don, check_done, idx_map = self.merge(latent, prev, future_bonds, check_done, final_molecules)
+    #         # if there is a 0 remove it and pluck
+    #     return final_molecules
+
+    
+    # def merge(self, latent, current, future_bonds, check_done, final_molecules):
+    #     return latent, check_done, idx_map
 
 
 
