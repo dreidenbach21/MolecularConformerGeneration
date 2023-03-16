@@ -276,49 +276,31 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             trajectory = []
             if self.save_trajectories: trajectory.append(x_evolved_A.detach().cpu())
             if self.loss_geometry_regularization:
-                # src, dst = geometry_graph_A.edges()
-                # src = src.long()
-                # dst = dst.long()
-                # d_squared = torch.sum((x_evolved_A[src] - x_evolved_A[dst]) ** 2, dim=1)
-                # geom_loss = torch.sum((d_squared - geometry_graph_A.edata['feat'] ** 2) ** 2)
-
-                # src, dst = geometry_graph_B.edges()
-                # src = src.long()
-                # dst = dst.long()
-                # d_squared += torch.sum((x_evolved_B[src] - x_evolved_B[dst]) ** 2, dim=1)
-                # geom_loss += torch.sum((d_squared - geometry_graph_B.edata['feat'] ** 2) ** 2)
-                skip_for_now = True
-                geom_loss = 0
+                src, dst = geometry_graph_A.edges()
+                src = src.long()
+                dst = dst.long()
+                d_squared = torch.sum((x_evolved_A[src] - x_evolved_A[dst]) ** 2, dim=1)
+                geom_loss = torch.sum((d_squared - geometry_graph_A.edata['feat'] ** 2) ** 2)
+                # skip_for_now = True
+                # geom_loss = 0
             else:
                 geom_loss = 0
             if self.geometry_regularization:
-                # src, dst = geometry_graph_A.edges()
-                # src = src.long()
-                # dst = dst.long()
-                # for step in range(self.geom_reg_steps):
-                #     d_squared = torch.sum((x_evolved_A[src] - x_evolved_A[dst]) ** 2, dim=1)
-                #     Loss = torch.sum((d_squared - geometry_graph_A.edata['feat'] ** 2)**2) # this is the loss whose gradient we are calculating here
-                #     grad_d_squared = 2 * (x_evolved_A[src] - x_evolved_A[dst])
-                #     geometry_graph_A.edata['partial_grads'] = 2 * (d_squared - geometry_graph_A.edata['feat'] ** 2)[:,None] * grad_d_squared
-                #     geometry_graph_A.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),
-                #                               fn.sum('partial_grads_msg', 'grad_x_evolved'))
-                #     grad_x_evolved = geometry_graph_A.ndata['grad_x_evolved']
-                #     x_evolved_A = x_evolved_A + self.geometry_reg_step_size * grad_x_evolved
-                #     if self.save_trajectories:
-                #         trajectory.append(x_evolved_A.detach().cpu())
-
-                # src, dst = geometry_graph_B.edges()
-                # src = src.long()
-                # dst = dst.long()
-                # for step in range(self.geom_reg_steps):
-                #     d_squared = torch.sum((x_evolved_B[src] - x_evolved_B[dst]) ** 2, dim=1)
-                #     Loss = torch.sum((d_squared - geometry_graph_B.edata['feat'] ** 2)**2) # this is the loss whose gradient we are calculating here
-                #     grad_d_squared = 2 * (x_evolved_B[src] - x_evolved_B[dst])
-                #     geometry_graph_B.edata['partial_grads'] = 2 * (d_squared - geometry_graph_B.edata['feat'] ** 2)[:,None] * grad_d_squared
-                #     geometry_graph_B.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),fn.sum('partial_grads_msg', 'grad_x_evolved'))
-                #     grad_x_evolved = geometry_graph_B.ndata['grad_x_evolved']
-                #     x_evolved_B = x_evolved_B + self.geometry_reg_step_size * grad_x_evolved
-                skip_for_now = True
+                src, dst = geometry_graph_A.edges()
+                src = src.long()
+                dst = dst.long()
+                for step in range(self.geom_reg_steps):
+                    d_squared = torch.sum((x_evolved_A[src] - x_evolved_A[dst]) ** 2, dim=1)
+                    Loss = torch.sum((d_squared - geometry_graph_A.edata['feat'] ** 2)**2) # this is the loss whose gradient we are calculating here
+                    grad_d_squared = 2 * (x_evolved_A[src] - x_evolved_A[dst])
+                    geometry_graph_A.edata['partial_grads'] = 2 * (d_squared - geometry_graph_A.edata['feat'] ** 2)[:,None] * grad_d_squared
+                    geometry_graph_A.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),
+                                              fn.sum('partial_grads_msg', 'grad_x_evolved'))
+                    grad_x_evolved = geometry_graph_A.ndata['grad_x_evolved']
+                    x_evolved_A = x_evolved_A + self.geometry_reg_step_size * grad_x_evolved
+                    if self.save_trajectories:
+                        trajectory.append(x_evolved_A.detach().cpu())
+                # skip_for_now = True
 
 
             input_node_upd_A = torch.cat((self.node_norm(A_graph.ndata['feat_cc']),
@@ -384,63 +366,54 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             # Equation 4: Aggregate messages
             A_graph.update_all(fn.copy_e('msg_cc', 'm_cc'), fn.mean('m_cc', 'aggr_msg_cc'))#copy_edge
             B_graph.update_all(fn.copy_e('msg_cc', 'm_cc'), fn.mean('m_cc', 'aggr_msg_cc'))
-
+            # ipdb.set_trace()
             # TODO: Implement distance regularization
             trajectory = []
             if self.save_trajectories: trajectory.append(x_evolved_A.detach().cpu())
             if self.loss_geometry_regularization:
-                # src, dst = geometry_graph_A.edges()
-                # src = src.long()
-                # dst = dst.long()
-                # d_squared = torch.sum((x_evolved_A[src] - x_evolved_A[dst]) ** 2, dim=1)
-                # geom_loss = torch.sum((d_squared - geometry_graph_A.edata['feat'] ** 2) ** 2)
-
-                # src, dst = geometry_graph_B.edges()
-                # src = src.long()
-                # dst = dst.long()
-                # d_squared += torch.sum((x_evolved_B[src] - x_evolved_B[dst]) ** 2, dim=1)
-                # geom_loss += torch.sum((d_squared - geometry_graph_B.edata['feat'] ** 2) ** 2)
-                skip_for_now = True
-                geom_loss = 0
+                src, dst = geometry_graph_A.edges()
+                src = src.long()
+                dst = dst.long()
+                d_squared = torch.sum((x_evolved_A[src] - x_evolved_A[dst]) ** 2, dim=1)
+                geom_loss = torch.sum((d_squared - geometry_graph_A.edata['feat'] ** 2) ** 2)
+                if geometry_graph_B is not None:
+                    src, dst = geometry_graph_B.edges()
+                    src = src.long()
+                    dst = dst.long()
+                    d_squared = torch.sum((x_evolved_B[src] - x_evolved_B[dst]) ** 2, dim=1) #TODO why is this plus
+                    geom_loss += torch.sum((d_squared - geometry_graph_B.edata['feat'] ** 2) ** 2)
+                # skip_for_now = True
+                # geom_loss = 0
             else:
                 geom_loss = 0
             if self.geometry_regularization:
-                # src, dst = geometry_graph_A.edges()
-                # src = src.long()
-                # dst = dst.long()
-                # for step in range(self.geom_reg_steps):
-                #     d_squared = torch.sum((x_evolved_A[src] - x_evolved_A[dst]) ** 2, dim=1)
-                #     Loss = torch.sum((d_squared - geometry_graph_A.edata['feat'] ** 2)**2) # this is the loss whose gradient we are calculating here
-                #     grad_d_squared = 2 * (x_evolved_A[src] - x_evolved_A[dst])
-                #     geometry_graph_A.edata['partial_grads'] = 2 * (d_squared - geometry_graph_A.edata['feat'] ** 2)[:,None] * grad_d_squared
-                #     geometry_graph_A.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),
-                #                               fn.sum('partial_grads_msg', 'grad_x_evolved'))
-                #     grad_x_evolved = geometry_graph_A.ndata['grad_x_evolved']
-                #     x_evolved_A = x_evolved_A + self.geometry_reg_step_size * grad_x_evolved
-                #     if self.save_trajectories:
-                #         trajectory.append(x_evolved_A.detach().cpu())
-
-                # src, dst = geometry_graph_B.edges()
-                # src = src.long()
-                # dst = dst.long()
-                # for step in range(self.geom_reg_steps):
-                #     d_squared = torch.sum((x_evolved_B[src] - x_evolved_B[dst]) ** 2, dim=1)
-                #     Loss = torch.sum((d_squared - geometry_graph_B.edata['feat'] ** 2)**2) # this is the loss whose gradient we are calculating here
-                #     grad_d_squared = 2 * (x_evolved_B[src] - x_evolved_B[dst])
-                #     geometry_graph_B.edata['partial_grads'] = 2 * (d_squared - geometry_graph_B.edata['feat'] ** 2)[:,None] * grad_d_squared
-                #     geometry_graph_B.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),fn.sum('partial_grads_msg', 'grad_x_evolved'))
-                #     grad_x_evolved = geometry_graph_B.ndata['grad_x_evolved']
-                #     x_evolved_B = x_evolved_B + self.geometry_reg_step_size * grad_x_evolved
-                skip_for_now = True
-
-
-
-            # if self.debug:
-            #     log(torch.max(A_graph.ndata['aggr_msg'].abs()), 'data[aggr_msg]: \sum_j m_{i->j} ')
-            #     if self.A_evolve:
-            #         log(torch.max(A_graph.ndata['x_update'].abs()),
-            #             'data[x_update] : \sum_j (x_i - x_j) * \phi^x(m_{i->j})')
-            #         log(torch.max(x_evolved_A.abs()), 'x_i new = x_evolved_A : x_i + data[x_update]')
+                src, dst = geometry_graph_A.edges()
+                src = src.long()
+                dst = dst.long()
+                for step in range(self.geom_reg_steps):
+                    d_squared = torch.sum((x_evolved_A[src] - x_evolved_A[dst]) ** 2, dim=1)
+                    Loss = torch.sum((d_squared - geometry_graph_A.edata['feat'] ** 2)**2) # this is the loss whose gradient we are calculating here
+                    grad_d_squared = 2 * (x_evolved_A[src] - x_evolved_A[dst])
+                    geometry_graph_A.edata['partial_grads'] = 2 * (d_squared - geometry_graph_A.edata['feat'] ** 2)[:,None] * grad_d_squared
+                    geometry_graph_A.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),
+                                              fn.sum('partial_grads_msg', 'grad_x_evolved'))
+                    grad_x_evolved = geometry_graph_A.ndata['grad_x_evolved']
+                    x_evolved_A = x_evolved_A + self.geometry_reg_step_size * grad_x_evolved
+                    if self.save_trajectories:
+                        trajectory.append(x_evolved_A.detach().cpu())
+                if geometry_graph_B is not None:
+                    src, dst = geometry_graph_B.edges()
+                    src = src.long()
+                    dst = dst.long()
+                    for step in range(self.geom_reg_steps):
+                        d_squared = torch.sum((x_evolved_B[src] - x_evolved_B[dst]) ** 2, dim=1)
+                        Loss = torch.sum((d_squared - geometry_graph_B.edata['feat'] ** 2)**2) # this is the loss whose gradient we are calculating here
+                        grad_d_squared = 2 * (x_evolved_B[src] - x_evolved_B[dst])
+                        geometry_graph_B.edata['partial_grads'] = 2 * (d_squared - geometry_graph_B.edata['feat'] ** 2)[:,None] * grad_d_squared
+                        geometry_graph_B.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),fn.sum('partial_grads_msg', 'grad_x_evolved'))
+                        grad_x_evolved = geometry_graph_B.ndata['grad_x_evolved']
+                        x_evolved_B = x_evolved_B + self.geometry_reg_step_size * grad_x_evolved
+                # skip_for_now = True
 
             input_node_upd_A = torch.cat((self.node_norm(A_graph.ndata['feat_cc']),
                                                A_graph.ndata['aggr_msg_cc'],

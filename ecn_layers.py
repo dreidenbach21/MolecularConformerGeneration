@@ -11,6 +11,7 @@ from dgl import function as fn
 from embedding import AtomEncoder, A_feature_dims
 from logger import log
 from model_utils import *
+import ipdb
 
 class Fine_Grain_Layer(nn.Module):
     def __init__(
@@ -322,11 +323,11 @@ class Fine_Grain_Layer(nn.Module):
                 dst = dst.long()
                 d_squared = torch.sum((x_evolved_A[src] - x_evolved_A[dst]) ** 2, dim=1)
                 geom_loss = torch.sum((d_squared - geometry_graph_A.edata['feat'] ** 2) ** 2)
-
+                # ipdb.set_trace()
                 src, dst = geometry_graph_B.edges()
                 src = src.long()
                 dst = dst.long()
-                d_squared += torch.sum((x_evolved_B[src] - x_evolved_B[dst]) ** 2, dim=1)
+                d_squared = torch.sum((x_evolved_B[src] - x_evolved_B[dst]) ** 2, dim=1)
                 geom_loss += torch.sum((d_squared - geometry_graph_B.edata['feat'] ** 2) ** 2)
             else:
                 geom_loss = 0
@@ -1001,11 +1002,11 @@ class Coarse_Grain_Layer(nn.Module):
                 dst = dst.long()
                 d_squared = torch.sum((x_evolved_A[src] - x_evolved_A[dst]) ** 2, dim=1)
                 geom_loss = torch.sum((d_squared - geometry_graph_A.edata['feat'] ** 2) ** 2)
-
+                # ipdb.set_trace()
                 src, dst = geometry_graph_B.edges()
                 src = src.long()
                 dst = dst.long()
-                d_squared += torch.sum((x_evolved_B[src] - x_evolved_B[dst]) ** 2, dim=1)
+                d_squared = torch.sum((x_evolved_B[src] - x_evolved_B[dst]) ** 2, dim=1)
                 geom_loss += torch.sum((d_squared - geometry_graph_B.edata['feat'] ** 2) ** 2)
             else:
                 geom_loss = 0

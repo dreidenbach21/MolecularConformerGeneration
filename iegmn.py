@@ -331,7 +331,7 @@ class IEGMN_Layer(nn.Module):
                 src, dst = geometry_graph_B.edges()
                 src = src.long()
                 dst = dst.long()
-                d_squared += torch.sum((x_evolved_B[src] - x_evolved_B[dst]) ** 2, dim=1)
+                d_squared = torch.sum((x_evolved_B[src] - x_evolved_B[dst]) ** 2, dim=1)
                 geom_loss += torch.sum((d_squared - geometry_graph_B.edata['feat'] ** 2) ** 2)
             else:
                 geom_loss = 0

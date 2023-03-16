@@ -143,6 +143,7 @@ def mol2graph(mol, name = "test", radius=4, max_neighbors=None, use_rdkit_coords
     graph.edata['feat'] = distance_featurizer(dist_list, 0.75)  # avg distance = 1.3 So divisor = (4/7)*1.3 = ~0.75
     graph.ndata['x'] = torch.from_numpy(np.array(lig_coords).astype(np.float32)) #! this should be the current coords not always ground truth
     graph.ndata['x_ref'] = torch.from_numpy(np.array(lig_coords).astype(np.float32))
+    graph.ndata['x_true'] = torch.from_numpy(np.array(true_lig_coords).astype(np.float32))
     graph.ndata['mu_r_norm'] = torch.from_numpy(np.array(mean_norm_list).astype(np.float32))
     return graph
 

@@ -184,7 +184,8 @@ if __name__ =="__main__":
     print("Decoder Init Success")
     print("# of Params = ", sum(p.numel() for p in decoder.parameters() if p.requires_grad))
 
-    generated_molecule, rdkit_reference = decoder(Acg_batch, B_batch, frag_ids, bond_breaks)
+    generated_molecule, rdkit_reference, results = decoder(Acg_batch, B_batch, frag_ids, geoA_batch)
+    # TODO may be able to pass in A instead of B for fine molecules to more efficiently calculate the loss
 
     for G, R, T in zip(dgl.unbatch(generated_molecule), dgl.unbatch(rdkit_reference), dgl.unbatch(A_batch)):
         gx = G.ndata['x_cc'].cpu().detach().numpy()
@@ -193,14 +194,17 @@ if __name__ =="__main__":
 
         Rot, trans = rigid_transform_Kabsch_3D(rx.T, gx.T)
         lig_coords = ((Rot @ (rx).T).T + trans.squeeze())
+        print('RMSD between rdkit ligand and Generated ligand is ', np.sqrt(np.sum((rx - gx) ** 2, axis=1).mean()).item())
         print('kabsch RMSD between rdkit ligand and Generated ligand is ', np.sqrt(np.sum((lig_coords - gx) ** 2, axis=1).mean()).item())
-
+        print()
         Rot, trans = rigid_transform_Kabsch_3D(rx.T, tx.T)
         lig_coords = ((Rot @ (rx).T).T + trans.squeeze())
+        print('RMSD between rdkit ligand and True ligand is ', np.sqrt(np.sum((rx - tx) ** 2, axis=1).mean()).item())
         print('kabsch RMSD between rdkit ligand and True ligand is ', np.sqrt(np.sum((lig_coords - tx) ** 2, axis=1).mean()).item())
-
+        print()
         Rot, trans = rigid_transform_Kabsch_3D(tx.T, gx.T)
         lig_coords = ((Rot @ (tx).T).T + trans.squeeze())
+        print('RMSD between True ligand and Generated ligand is ', np.sqrt(np.sum((tx - gx) ** 2, axis=1).mean()).item())
         print('kabsch RMSD between True ligand and Generated ligand is ', np.sqrt(np.sum((lig_coords - gx) ** 2, axis=1).mean()).item())
         print()
-    print("Decoder Autoregressive Preliminary Test Success")
+    print("Decoder Autoregressive Preliminary Test Success with EquiBind forward pass distance regularization")
