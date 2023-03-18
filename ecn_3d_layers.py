@@ -116,34 +116,34 @@ class Pooling_3D_Layer(nn.Module):
                 self.B_coords_norm = self.A_coords_norm
             else:
                 self.B_coords_norm = CoordsNorm(scale_init=1e-2)
-
-        self.att_mlp_Q_A = nn.Sequential(
-            nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
-            get_non_lin(nonlin, leakyrelu_neg_slope),
-        )
-        self.att_mlp_K_A = nn.Sequential(
-            nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
-            get_non_lin(nonlin, leakyrelu_neg_slope),
-        )
-        self.att_mlp_V_A = nn.Sequential(
-            nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
-        )
-        if self.weight_sharing:
-            self.att_mlp_Q_B = self.att_mlp_Q_A
-            self.att_mlp_K_B = self.att_mlp_K_A
-            self.att_mlp_V_B = self.att_mlp_V_A
-        else:
-            self.att_mlp_Q_B = nn.Sequential(
-                nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
-                get_non_lin(nonlin, leakyrelu_neg_slope),
-            )
-            self.att_mlp_K_B = nn.Sequential(
-                nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
-                get_non_lin(nonlin, leakyrelu_neg_slope),
-            )
-            self.att_mlp_V_B = nn.Sequential(
-                nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
-            )
+        # TODO: DO we want to use attention in Pooling layer?
+        # self.att_mlp_Q_A = nn.Sequential(
+        #     nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
+        #     get_non_lin(nonlin, leakyrelu_neg_slope),
+        # )
+        # self.att_mlp_K_A = nn.Sequential(
+        #     nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
+        #     get_non_lin(nonlin, leakyrelu_neg_slope),
+        # )
+        # self.att_mlp_V_A = nn.Sequential(
+        #     nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
+        # )
+        # if self.weight_sharing:
+        #     self.att_mlp_Q_B = self.att_mlp_Q_A
+        #     self.att_mlp_K_B = self.att_mlp_K_A
+        #     self.att_mlp_V_B = self.att_mlp_V_A
+        # else:
+        #     self.att_mlp_Q_B = nn.Sequential(
+        #         nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
+        #         get_non_lin(nonlin, leakyrelu_neg_slope),
+        #     )
+        #     self.att_mlp_K_B = nn.Sequential(
+        #         nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
+        #         get_non_lin(nonlin, leakyrelu_neg_slope),
+        #     )
+        #     self.att_mlp_V_B = nn.Sequential(
+        #         nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
+        #     )
         # if self.standard_norm_order:
         self.node_mlp_A = nn.Sequential(
             nn.Linear(invar_feats_dim_h + self.out_feats_dim_h, invar_feats_dim_h), #orig_invar_feats_dim_h + 2*
@@ -487,13 +487,13 @@ class Coarse_Grain_3DLayer(nn.Module):
             self.B_h_update = self.A_h_update
         else:
             self.B_h_update = nn.Sequential(
-            nn.Linear(3*self.D, 3*self.D),
-            get_layer_norm(layer_norm, 3*self.D),
-            get_non_lin(nonlin, leakyrelu_neg_slope),
-            nn.Dropout(dropout),
-            nn.Linear(3*self.D, self.D),
-            get_layer_norm(layer_norm, self.D),
-        )
+                nn.Linear(3*self.D, 3*self.D),
+                get_layer_norm(layer_norm, 3*self.D),
+                get_non_lin(nonlin, leakyrelu_neg_slope),
+                nn.Dropout(dropout),
+                nn.Linear(3*self.D, self.D),
+                get_layer_norm(layer_norm, self.D),
+            )
 
 
 

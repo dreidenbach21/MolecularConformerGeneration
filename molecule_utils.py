@@ -25,6 +25,26 @@ def align_coordinates(rd_mol, kit_mol):
     rotated_rdkit_coords = ((R @ (prior_coords).T).T + t.squeeze())
     return rotated_rdkit_coords
 
+def align(source, target):
+        # Rot, trans = rigid_transform_Kabsch_3D_torch(input.T, target.T)
+        # lig_coords = ((Rot @ (input).T).T + trans.squeeze())
+        # Kabsch RMSD implementation below taken from EquiBind
+        # source = kit_mol.GetConformer().GetPositions()
+        # target = rd_mol.GetConformer().GetPositions()
+        lig_coords_pred = target
+        lig_coords = source
+        lig_coords_pred_mean = lig_coords_pred.mean(dim=0, keepdim=True)  # (1,3)
+        lig_coords_mean = lig_coords.mean(dim=0, keepdim=True)  # (1,3)
+
+        A = (lig_coords_pred - lig_coords_pred_mean).transpose(0, 1) @ (lig_coords - lig_coords_mean)
+
+        U, S, Vt = torch.linalg.svd(A)
+
+        corr_mat = torch.diag(torch.tensor([1, 1, torch.sign(torch.det(A))], device=lig_coords_pred.device))
+        rotation = (U @ corr_mat) @ Vt
+        translation = lig_coords_pred_mean - torch.t(rotation @ lig_coords_mean.t())  # (1,3)
+        return (rotation @ lig_coords.t()).t() + translation
+
 def get_torsions_geo(mol_list):
     atom_counter = 0
     torsionList = []
@@ -90,14 +110,20 @@ def autoregressive_bfs(ids, bmap, a=1.0, b=1.1):
         queue.extend(kids)
     return order
 
-def mol2graph(mol, name = "test", radius=4, max_neighbors=None, use_rdkit_coords = False):
+def mol2graph(mol, name = "test", radius=4, max_neighbors=None, use_rdkit_coords = False, seed = 0):
     conf = mol.GetConformer()
     true_lig_coords = conf.GetPositions()
     if use_rdkit_coords:
-        rdkit_coords = get_rdkit_coords(mol) #.numpy()
+        # import ipdb; ipdb.set_trace()
+        rdkit_coords = get_rdkit_coords(mol, seed) #.numpy()
         R, t = rigid_transform_Kabsch_3D(rdkit_coords.T, true_lig_coords.T)
         lig_coords = ((R @ (rdkit_coords).T).T + t.squeeze())
         print('kabsch RMSD between rdkit ligand and true ligand is ', np.sqrt(np.sum((lig_coords - true_lig_coords) ** 2, axis=1).mean()).item())
+
+        lig_coords = align(torch.from_numpy(rdkit_coords), torch.from_numpy(true_lig_coords)).numpy()
+        # print('LOSS kabsch RMSD between rdkit ligand and true ligand is ', np.sqrt(np.sum((lig_coords - true_lig_coords) ** 2, axis=1).mean()).item())
+        loss = torch.nn.MSELoss()
+        print('LOSS kabsch MSE between rdkit ligand and true ligand is ', loss(torch.from_numpy(true_lig_coords), torch.from_numpy(lig_coords)).cpu().detach().numpy().item())
     else:
         lig_coords = true_lig_coords
     num_nodes = lig_coords.shape[0]

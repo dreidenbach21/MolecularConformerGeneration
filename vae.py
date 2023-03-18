@@ -1,15 +1,110 @@
 from ecn_3d import *
 from equivariant_model_utils import *
+from geometry_utils import *
 from decoder_utils import IEGMN_Bidirectional
 from collections import defaultdict
 import numpy as np
 import copy
 import ipdb
+from neko_fixed_attention import neko_MultiheadAttention
 
-# class BigGraph:
-#     def __init__(self, g, node_map):
-#         self.graph = g
-#         self.node_map = node_map
+class VAE(nn.Module):
+    def __init__(self, ecn, D, F, iegmn, atom_embedder, device = "cuda"):
+        super(VAE, self).__init__()
+        self.encoder = Encoder(ecn, D, F).to(device)
+        self.decoder = Decoder(iegmn, D, F, atom_embedder, device).to(device)
+        self.D = D 
+        self.F = F 
+        self.kl_v_beta = 1/1000
+        self.kl_h_beta = 1/1000
+        self.align_kabsch_weight = 20
+        self.ar_rmsd_weight = 1 #1
+        self.mse = nn.MSELoss()
+        # self.mse2 = nn.MSELoss(reduction='none')
+        self.device = device
+
+    def forward(self, frag_ids, A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch):
+        enc_out = self.encoder(A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch)
+        results, geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg = enc_out
+        kl_v = self.encoder.kl(results["posterior_mean_V"], results["posterior_logvar_V"], results["prior_mean_V"], results["prior_logvar_V"], coordinates = True)
+        kl_h = self.encoder.kl(results["posterior_mean_h"], results["posterior_logvar_h"], results["prior_mean_h"], results["prior_logvar_h"], coordinates = False)
+
+        dec_out = self.decoder(A_cg, B_graph, frag_ids, geometry_graph_A)
+        generated_molecule, rdkit_reference, dec_results = dec_out
+        return generated_molecule, rdkit_reference, dec_results, (kl_v, kl_h), enc_out
+    
+    def loss_function(self, generated_molecule, rdkit_reference, dec_results, KL_terms, step = 0):
+        kl_v, kl_h = KL_terms
+        print("KL V", kl_v)
+        print("kl h", kl_h)
+        if step < 0:
+            kl_loss = 0
+        else:
+            kl_loss = self.kl_v_beta*kl_v + self.kl_h_beta*kl_h
+
+        # final_gen_coords = generated_molecule.ndata['x_cc']
+        # true_coords = generated_molecule.ndata['x_true']
+        # rdkit_coords = rdkit_reference.ndata['x_ref']
+        ar_rmsd, final_align_rmsd = self.coordinate_loss(dec_results, generated_molecule) #final_gen_coords, true_coords)
+        print("Auto Regressive MSE", ar_rmsd)
+        print("Kabsch MSE", final_align_rmsd)
+        print("step", step, "KL Loss", kl_loss)
+        loss =  self.ar_rmsd_weight*ar_rmsd + self.align_kabsch_weight*final_align_rmsd + kl_loss
+        return loss, (ar_rmsd, final_align_rmsd, kl_loss)
+
+    def align(self, source, target):
+        # Rot, trans = rigid_transform_Kabsch_3D_torch(input.T, target.T)
+        # lig_coords = ((Rot @ (input).T).T + trans.squeeze())
+        # Kabsch RMSD implementation below taken from EquiBind
+        lig_coords_pred = target
+        lig_coords = source
+        lig_coords_pred_mean = lig_coords_pred.mean(dim=0, keepdim=True)  # (1,3)
+        lig_coords_mean = lig_coords.mean(dim=0, keepdim=True)  # (1,3)
+
+        A = (lig_coords_pred - lig_coords_pred_mean).transpose(0, 1) @ (lig_coords - lig_coords_mean)
+
+        U, S, Vt = torch.linalg.svd(A)
+
+        corr_mat = torch.diag(torch.tensor([1, 1, torch.sign(torch.det(A))], device=lig_coords_pred.device))
+        rotation = (U @ corr_mat) @ Vt
+        translation = lig_coords_pred_mean - torch.t(rotation @ lig_coords_mean.t())  # (1,3)
+        return (rotation @ lig_coords.t()).t() + translation
+        # return lig_coords
+    
+    def rmsd(self, generated, true, align = False):
+        if align:
+            true = self.align(true, generated)
+        # loss = torch.sqrt(self.mse(true, generated))
+        loss = self.mse(true, generated)
+        return loss
+    
+    # def mse_loss(self, generated, true, align = False):
+    #     if align:
+    #         true = self.align(true, generated)
+    #     error = self.mse2(true, generated).sum(dim = 1)
+    #     mse = error.mean()
+    #     return mse
+
+    def coordinate_loss(self, dec_results, generated_molecule):# = None, final_gen_coords = None, true_coords = None):
+        loss = 0
+        for step, info in enumerate(dec_results):
+            coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, _, id_batch, ref_coords_A, ref_coords_B = info
+            #TODO can use id_batch to seperate into molecules to align
+            loss += self.rmsd(coords_A, ref_coords_A) # Generative accuracy
+            if coords_B is None:
+                assert(step == 0)
+                continue
+            loss += self.rmsd(coords_B, ref_coords_B) # AR consistency 
+        molecules = dgl.unbatch(generated_molecule)
+        align_loss = [self.rmsd(m.ndata['x_cc'],m.ndata['x_true'], align = True) for m in molecules]
+        # for m in molecules:
+        #     print('LOSS kabsch RMSD between generated ligand and true ligand is ', np.sqrt(np.sum((m.ndata['x_cc'].cpu().detach().numpy() - self.align(m.ndata['x_true'], m.ndata['x_cc']).cpu().detach().numpy()) ** 2, axis=1).mean()).item())
+        #     print('LOSS-2 kabsch RMSD between generated ligand and true ligand is ', np.sqrt(self.mse(m.ndata['x_cc'], self.align(m.ndata['x_true'], m.ndata['x_cc'])).cpu().detach().numpy()).item())
+        #     print('LOSS-3 kabsch RMSD between generated ligand and true ligand is ', np.sqrt(self.mse_loss(m.ndata['x_cc'], m.ndata['x_true'], align=True).cpu().detach().numpy()).item())
+        print("Align MSE Loss", align_loss)
+        align_loss = sum(align_loss)
+        return loss, align_loss #self.rmsd(final_gen_coords, true_coords, align = True)
+            
 
 class Encoder(nn.Module):
     def __init__(self, ecn, D, F):
@@ -96,7 +191,8 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, iegmn, D, F, atom_embedder, device = "cuda"):
         super(Decoder, self).__init__()
-        self.mha = torch.nn.MultiheadAttention(embed_dim = 3, num_heads = 1, batch_first = True) # requires mask and reshaping on the batch dim due to dgl
+        # self.mha = torch.nn.MultiheadAttention(embed_dim = 3, num_heads = 1, batch_first = True)
+        self.mha = neko_MultiheadAttention(embed_dim = 3, num_heads = 1, batch_first = True)
         self.iegmn = iegmn
         self.h_channel_selection = atom_embedder # taken from the FG encoder
         self.device = device
@@ -162,45 +258,6 @@ class Decoder(nn.Module):
         coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory = self.iegmn(latent, prev, mpnn_only = t==0, geometry_graph_A = geo_latent, geometry_graph_B = geo_current)
         # coords_A held in latent.ndata['x_now']
         return  coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory
-
-    # def split_subgraph_nodes(self, X, H, fine, frag_ids, bfs_order, bond_breaks, start = 0):
-    #     # ipdb.set_trace()
-    #     result = []
-    #     for idx, atom_ids in enumerate(frag_ids):
-    #         og_atom_ids = list(atom_ids)
-    #         atom_ids = [x+start for x in atom_ids]
-    #         coords = X[atom_ids, :]
-    #         feats = H[atom_ids, :]
-    #         # result.append( (coords, feats, bfs_order[idx]))
-    #         # subg = fine.subgraph(og_atom_ids)
-    #         # ipdb.set_trace()
-    #         subg = dgl.node_subgraph(fine, og_atom_ids) #, relabel_nodes = False) # relabel does not work but we do have "_ID"
-    #         subg.ndata['x_cc'] = coords
-    #         subg.ndata['feat_cc'] = feats # here the rdkit Fine is being overwritten with the result of our attention operation as wanted
-    #         # TDO: better off creating a new function to create a subgraph instead of resetting stuff
-    #         result.append( (subg, bfs_order[idx]))
-    #     result.sort(key=lambda x: x[-1])
-
-    #     future_bonds = defaultdict(list)
-    #     sorted_frags = list(zip(frag_ids, bfs_order))
-    #     sorted_frags.sort(key = lambda d: d[1])
-    #     frags_ids = [x for x, y in sorted_frags]
-    #     u, v = fine.edges() # TDO can create live 4 angstrom cutoff
-    #     # ipdb.set_trace()
-    #     for idx, ab in enumerate(zip(u.tolist(), v.tolist())):
-    #         a, b = ab
-    #         a_check = [1 if a in check  else 0 for check in frags_ids]
-    #         b_check = [1 if b in check else 0 for check in frags_ids]
-    #         aa, bb = np.argmax(a_check), np.argmax(b_check)
-    #         if aa == bb:
-    #             continue
-    #         future_bonds[max(aa, bb)].append((a,b)) # this should include the bond_breaks
-    #     return result, future_bonds
-
-    # def split_subgraph_edges(self, X, H, fine, frag_ids, bfs_order, bond_breaks, start = 0):
-    #     # ipdb.set_trace()
-    #     result = []
-    #     return result, future_bonds
     
     def sort_ids(self, all_ids, all_order):
         result = []
@@ -269,14 +326,6 @@ class Decoder(nn.Module):
 
             final_molecule.ndata['x_cc'][updated_ids, :] = coords_A[cids, :]
             final_molecule.ndata['feat_cc'][updated_ids, :] = h_feats_A[cids, :]
-            
-    # def adaptive_batching(self, current_molecule, valid):
-    #     molecules = dgl.unbatch(current_molecule)
-    #     result = []
-    #     for idx, val in valid:
-    #         if val:
-    #             result.append(molecules[idx])
-    #     return dgl.batch(result).to(self.device)
 
     def forward(self, cg_mol_graph, rdkit_mol_graph, cg_frag_ids, true_geo_batch):
         # ipdb.set_trace()
@@ -318,9 +367,9 @@ class Decoder(nn.Module):
             ref_coords_A = latent.ndata['x_true']
             ref_coords_B = current_molecule.ndata['x_true'] if current_molecule is not None else None
             returns.append((coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory, id_batch, ref_coords_A, ref_coords_B))
-            print(f'{t} A MSE = {torch.mean(torch.sum(ref_coords_A - coords_A, dim = 1)**2)}')
-            if ref_coords_B is not None:
-                print(f'{t} B MSE = {torch.mean(torch.sum(ref_coords_B - coords_B, dim = 1)**2)}')
+            # print(f'{t} A MSE = {torch.mean(torch.sum(ref_coords_A - coords_A, dim = 1)**2)}')
+            # if ref_coords_B is not None:
+                # print(f'{t} B MSE = {torch.mean(torch.sum(ref_coords_B - coords_B, dim = 1)**2)}')
             self.update_molecule(final_molecule, id_batch, coords_A, h_feats_A, latent)
             progress -= torch.tensor([len(x) if x is not None else 0 for x in id_batch])
             if t == 0:
@@ -335,6 +384,13 @@ class Decoder(nn.Module):
 
         return final_molecule, rdkit_reference, returns
 
+        # def adaptive_batching(self, current_molecule, valid):
+    #     molecules = dgl.unbatch(current_molecule)
+    #     result = []
+    #     for idx, val in valid:
+    #         if val:
+    #             result.append(molecules[idx])
+    #     return dgl.batch(result).to(self.device)
 
     # def forward_v1(self, cg_mol_graph, rdkit_mol_graph, cg_frag_ids, bond_breaks):
     #     # ipdb.set_trace()
@@ -403,3 +459,41 @@ class Decoder(nn.Module):
 
 
     
+# def split_subgraph_nodes(self, X, H, fine, frag_ids, bfs_order, bond_breaks, start = 0):
+    #     # ipdb.set_trace()
+    #     result = []
+    #     for idx, atom_ids in enumerate(frag_ids):
+    #         og_atom_ids = list(atom_ids)
+    #         atom_ids = [x+start for x in atom_ids]
+    #         coords = X[atom_ids, :]
+    #         feats = H[atom_ids, :]
+    #         # result.append( (coords, feats, bfs_order[idx]))
+    #         # subg = fine.subgraph(og_atom_ids)
+    #         # ipdb.set_trace()
+    #         subg = dgl.node_subgraph(fine, og_atom_ids) #, relabel_nodes = False) # relabel does not work but we do have "_ID"
+    #         subg.ndata['x_cc'] = coords
+    #         subg.ndata['feat_cc'] = feats # here the rdkit Fine is being overwritten with the result of our attention operation as wanted
+    #         # TDO: better off creating a new function to create a subgraph instead of resetting stuff
+    #         result.append( (subg, bfs_order[idx]))
+    #     result.sort(key=lambda x: x[-1])
+
+    #     future_bonds = defaultdict(list)
+    #     sorted_frags = list(zip(frag_ids, bfs_order))
+    #     sorted_frags.sort(key = lambda d: d[1])
+    #     frags_ids = [x for x, y in sorted_frags]
+    #     u, v = fine.edges() # TDO can create live 4 angstrom cutoff
+    #     # ipdb.set_trace()
+    #     for idx, ab in enumerate(zip(u.tolist(), v.tolist())):
+    #         a, b = ab
+    #         a_check = [1 if a in check  else 0 for check in frags_ids]
+    #         b_check = [1 if b in check else 0 for check in frags_ids]
+    #         aa, bb = np.argmax(a_check), np.argmax(b_check)
+    #         if aa == bb:
+    #             continue
+    #         future_bonds[max(aa, bb)].append((a,b)) # this should include the bond_breaks
+    #     return result, future_bonds
+
+    # def split_subgraph_edges(self, X, H, fine, frag_ids, bfs_order, bond_breaks, start = 0):
+    #     # ipdb.set_trace()
+    #     result = []
+    #     return result, future_bonds

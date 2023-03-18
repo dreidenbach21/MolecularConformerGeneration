@@ -97,7 +97,7 @@ class Fine_Grain_Layer(nn.Module):
             self.B_edge_mlp = self.A_edge_mlp
         else:
             B_edge_mlp_input_dim = (invar_feats_dim_h * 2) + B_input_edge_feats_dim
-            if self.use_dist_in_layers and self.B_evolve:
+            if self.use_dist_in_layers: # and self.B_evolve:
                 B_edge_mlp_input_dim += len(self.all_sigmas_dist)
             # if self.standard_norm_order:
             self.B_edge_mlp = nn.Sequential(
