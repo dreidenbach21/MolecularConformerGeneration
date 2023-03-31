@@ -127,6 +127,13 @@ def mol2graph(mol, name = "test", radius=4, max_neighbors=None, use_rdkit_coords
     else:
         lig_coords = true_lig_coords
     num_nodes = lig_coords.shape[0]
+
+    remove_centroid = True
+    if remove_centroid:
+        lig_coords -= np.mean(lig_coords, axis = 0)
+        true_lig_coords -= np.mean(true_lig_coords, axis = 0)
+        print("Remove Centroid", np.mean(lig_coords, axis = 0))
+
     assert lig_coords.shape[1] == 3
     distance = spa.distance.cdist(lig_coords, lig_coords)
     src_list = []
@@ -164,6 +171,7 @@ def mol2graph(mol, name = "test", radius=4, max_neighbors=None, use_rdkit_coords
     graph = dgl.graph((torch.tensor(src_list), torch.tensor(dst_list)), num_nodes=num_nodes, idtype=torch.int32)
 
     graph.ndata['feat'] = lig_atom_featurizer(mol)
+    graph.ndata['mol_feat'] = lig_atom_featurizer(mol)
     if use_rdkit_coords:
         graph.ndata['rd_feat'] = graph.ndata['feat']
     graph.edata['feat'] = distance_featurizer(dist_list, 0.75)  # avg distance = 1.3 So divisor = (4/7)*1.3 = ~0.75

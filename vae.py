@@ -15,42 +15,86 @@ class VAE(nn.Module):
         self.decoder = Decoder(iegmn, D, F, atom_embedder, device).to(device)
         self.D = D 
         self.F = F 
-        self.kl_v_beta = 1/1000
-        self.kl_h_beta = 1/1000
+        self.kl_v_beta = 1#e-4 2.5
+        self.kl_h_beta = 0#1e-4
+        self.kl_reg_beta = 1
         self.align_kabsch_weight = 20
         self.ar_rmsd_weight = 1 #1
         self.mse = nn.MSELoss()
-        # self.mse2 = nn.MSELoss(reduction='none')
+        # self.mse_sum= nn.MSELoss(reduction='sum')
         self.device = device
+        # self.weight_decay_v = 0.1
+        # self.weight_decay_h = 0.005
+        self.lambda_x_cc = 0
+        self.lambda_h_cc = 0 #1e-2
 
     def forward(self, frag_ids, A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch):
         enc_out = self.encoder(A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch)
         results, geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg = enc_out
+        print("[ENC] encoder output geom loss adn geom cg loss", geom_losses, geom_loss_cg)
         kl_v = self.encoder.kl(results["posterior_mean_V"], results["posterior_logvar_V"], results["prior_mean_V"], results["prior_logvar_V"], coordinates = True)
-        kl_h = self.encoder.kl(results["posterior_mean_h"], results["posterior_logvar_h"], results["prior_mean_h"], results["prior_logvar_h"], coordinates = False)
-
+        # kl_v_reg = self.encoder.kl(results["prior_mean_V"], results["prior_logvar_V"], torch.zeros_like(results["prior_mean_V"]), torch.zeros_like(results["prior_logvar_V"]), coordinates = True)
+        # kl_v_reg = self.encoder.kl(results["posterior_mean_V"], results["posterior_logvar_V"], torch.zeros_like(results["posterior_mean_V"]), torch.zeros_like(results["posterior_logvar_V"]), coordinates = True)
+        # kl_v_reg = self.encoder.kl(results["prior_mean_V"], results["prior_logvar_V"], results["prior_mean_V"], torch.zeros_like(results["prior_logvar_V"]), coordinates = True)
+        # kl_h = self.encoder.kl(results["posterior_mean_h"], results["posterior_logvar_h"], results["prior_mean_h"], results["prior_logvar_h"], coordinates = False)
+        kl_v_reg = 0
+        kl_h = 0
         dec_out = self.decoder(A_cg, B_graph, frag_ids, geometry_graph_A)
-        generated_molecule, rdkit_reference, dec_results = dec_out
-        return generated_molecule, rdkit_reference, dec_results, (kl_v, kl_h), enc_out
+        generated_molecule, rdkit_reference, dec_results, channel_selection_info = dec_out
+        return generated_molecule, rdkit_reference, dec_results, channel_selection_info, (kl_v, kl_h, kl_v_reg), enc_out
     
-    def loss_function(self, generated_molecule, rdkit_reference, dec_results, KL_terms, step = 0):
-        kl_v, kl_h = KL_terms
-        print("KL V", kl_v)
+    def loss_function(self, generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, step = 0):
+        kl_v, kl_h, kl_v_reg = KL_terms
+        print("[Loss Func] KL V", kl_v)
         print("kl h", kl_h)
-        if step < 0:
-            kl_loss = 0
+        print("KL prior reg kl", kl_v_reg)
+        if step < 20:
+            kl_loss = torch.tensor(0)
         else:
-            kl_loss = self.kl_v_beta*kl_v + self.kl_h_beta*kl_h
-
+            kl_loss = self.kl_v_beta*kl_v + self.kl_h_beta*kl_h + self.kl_reg_beta*kl_v_reg
+        
+        x_cc, h_cc = channel_selection_info
+        # print("[Loss Func] Channel Selection Norms (x,h): ", torch.norm(x_cc, 2), torch.norm(h_cc, 2))
+        x_true = rdkit_reference.ndata['x_true']
+        print("[Loss Func] Channel Selection Norms (x,h): ", torch.norm(x_cc, 2), torch.norm(h_cc, 2), torch.norm(x_true, 2))
+        # cc_loss = self.lambda_cc*self.mse_sum(x_cc, x_true) #self.lambda_cc*torch.norm(x_cc-x_true, 2)**2
+        x_cc_loss = (torch.norm(x_cc, 2) - torch.norm(x_true, 2))**2
+        print("[Loss Func] X CC norm diff loss", x_cc_loss)
+        h_cc_loss = (torch.norm(h_cc, 2))**2
+        print("[Loss Func] h CC norm loss", h_cc_loss)
+        cc_loss = self.lambda_x_cc*x_cc_loss + self.lambda_h_cc*h_cc_loss
+        print()
         # final_gen_coords = generated_molecule.ndata['x_cc']
         # true_coords = generated_molecule.ndata['x_true']
-        # rdkit_coords = rdkit_reference.ndata['x_ref']
-        ar_rmsd, final_align_rmsd = self.coordinate_loss(dec_results, generated_molecule) #final_gen_coords, true_coords)
-        print("Auto Regressive MSE", ar_rmsd)
-        print("Kabsch MSE", final_align_rmsd)
-        print("step", step, "KL Loss", kl_loss)
-        loss =  self.ar_rmsd_weight*ar_rmsd + self.align_kabsch_weight*final_align_rmsd + kl_loss
-        return loss, (ar_rmsd, final_align_rmsd, kl_loss)
+        # rdkit_coords = rdkit_reference.ndata['x_ref'] #! align below is usually False. It is flipped for the debug run
+        ar_rmsd, final_align_rmsd = self.coordinate_loss(dec_results, generated_molecule, align =  True) #final_gen_coords, true_coords)
+        print()
+        print("[Loss Func] Auto Regressive MSE", ar_rmsd)
+        print("[Loss Func] Kabsch Align MSE", final_align_rmsd)
+        print("[Loss Func] step", step, "KL Loss", kl_loss)
+        print()
+        loss =  self.ar_rmsd_weight*ar_rmsd + self.align_kabsch_weight*final_align_rmsd + kl_loss #+ cc_loss
+        results, geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg = enc_out
+        # ipdb.set_trace()
+        # l2_v = torch.norm(results["posterior_logvar_V"], 2)**2
+        # l2_v2 = torch.norm(results["posterior_mean_V"], 2)**2
+        # l2_vp = torch.norm(results["prior_logvar_V"], 2)**2
+        # l2_vp2 = torch.norm(results["prior_mean_V"], 2)**2
+        # TODO lo the std not logvar for norm
+        l2_v = torch.norm(self.std(results["posterior_logvar_V"]), 2)**2
+        l2_v2 = torch.norm(results["posterior_mean_V"], 2)**2
+        l2_vp = torch.norm(self.std(results["prior_logvar_V"]), 2)**2
+        l2_vp2 = torch.norm(results["prior_mean_V"], 2)**2
+        l2_d = torch.norm(results["posterior_mean_V"]-results["prior_mean_V"], 2)**2
+        # l2_h = torch.norm(results["posterior_logvar_h"], 2)**2
+        # print("log variance norm: v, h: ", l2_v, l2_h)
+        # l2_loss = 0 #self.weight_decay_v*l2_v+self.weight_decay_h*l2_h
+        # loss += l2_loss
+        # ipdb.set_trace()
+        return loss, (ar_rmsd.cpu(), final_align_rmsd.cpu(), kl_loss.cpu(), x_cc_loss.cpu(), h_cc_loss.cpu(), l2_v.cpu(), l2_v2.cpu(), l2_vp.cpu(), l2_vp2.cpu(), l2_d.cpu())
+
+    def std(self, input):
+        return 1e-12 + torch.exp(input / 2)
 
     def align(self, source, target):
         # Rot, trans = rigid_transform_Kabsch_3D_torch(input.T, target.T)
@@ -58,6 +102,8 @@ class VAE(nn.Module):
         # Kabsch RMSD implementation below taken from EquiBind
         lig_coords_pred = target
         lig_coords = source
+        if source.shape[0] == 1:
+            return source
         lig_coords_pred_mean = lig_coords_pred.mean(dim=0, keepdim=True)  # (1,3)
         lig_coords_mean = lig_coords.mean(dim=0, keepdim=True)  # (1,3)
 
@@ -74,27 +120,49 @@ class VAE(nn.Module):
     def rmsd(self, generated, true, align = False):
         if align:
             true = self.align(true, generated)
-        # loss = torch.sqrt(self.mse(true, generated))
         loss = self.mse(true, generated)
         return loss
     
-    # def mse_loss(self, generated, true, align = False):
-    #     if align:
-    #         true = self.align(true, generated)
-    #     error = self.mse2(true, generated).sum(dim = 1)
-    #     mse = error.mean()
-    #     return mse
+    def ar_loss_step(self, coords, coords_ref, chunks, align = False, step = 1, first_step = 10):
+        loss = 0
+        start = 0
+        for chunk in chunks:
+            loss += self.rmsd(coords[start: start + chunk, :], coords_ref[start:start+chunk, :], align)
+            start += chunk
+        if step == 0:
+            loss *= first_step
+        return loss
 
-    def coordinate_loss(self, dec_results, generated_molecule):# = None, final_gen_coords = None, true_coords = None):
+    def coordinate_loss(self, dec_results, generated_molecule, align = False):# = None, final_gen_coords = None, true_coords = None):
         loss = 0
         for step, info in enumerate(dec_results):
-            coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, _, id_batch, ref_coords_A, ref_coords_B = info
-            #TODO can use id_batch to seperate into molecules to align
-            loss += self.rmsd(coords_A, ref_coords_A) # Generative accuracy
+            coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, _, id_batch, ref_coords_A, ref_coords_B, ref_coords_B_split, gen_input, ar_con_input = info
+            # ipdb.set_trace()
+            # print("ID")
+            # num_molecules = len([x for x in id_batch if x is not None])
+            num_molecule_chunks = [len(x) for x in id_batch if x is not None]
+            # ga = self.mse_sum(coords_A, ref_coords_A)/num_molecules # Generative accuracy #TDO: was self.rmsd
+            ga = self.ar_loss_step(coords_A, ref_coords_A, num_molecule_chunks, align, step)
+            print(coords_A.shape, ga)
+            if torch.gt(ga, 1000).any() or torch.isinf(ga).any() or torch.isnan(ga).any():
+                print("Chunks", num_molecule_chunks)
+                print("generative input", gen_input)
+                print("Bad Coordinate Check A", coords_A)
+            loss += ga
             if coords_B is None:
                 assert(step == 0)
+                print()
                 continue
-            loss += self.rmsd(coords_B, ref_coords_B) # AR consistency 
+            # arc = self.mse_sum(coords_B, ref_coords_B)/num_molecules # AR consistency
+            num_molecule_chunks = [x.shape[0] for x in ref_coords_B_split]
+            arc = self.ar_loss_step(coords_B, ref_coords_B, num_molecule_chunks, align)
+            print(coords_B.shape, arc)
+            if torch.gt(arc, 1000).any() or torch.isinf(arc).any() or torch.isnan(arc).any():
+                print("Chunks", num_molecule_chunks)
+                print("conditional input", ar_con_input)
+                print("Bad Coordinate Check B", coords_B)
+            print()
+            loss += arc
         molecules = dgl.unbatch(generated_molecule)
         align_loss = [self.rmsd(m.ndata['x_cc'],m.ndata['x_true'], align = True) for m in molecules]
         # for m in molecules:
@@ -111,19 +179,22 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.ecn = ecn
         
-        self.posterior_mean_V = Vector_MLP(2*F, 2*F, 2*F, F)
-        self.posterior_mean_h = Scalar_MLP(2*D, 2*D, D)
-        self.posterior_logvar_V = Scalar_MLP(2*F*3, 2*F*3, F)# need to flatten to get equivariant noise N x F x 1
-        self.posterior_logvar_h = Scalar_MLP(2*D, 2*D, D)
+        self.posterior_mean_V = Vector_MLP(2*F, 2*F, 2*F, F, use_batchnorm = False)
+        self.posterior_mean_h = Scalar_MLP(2*D, 2*D, D, use_batchnorm = False)
+        self.posterior_logvar_V = Scalar_MLP(2*F*3, 2*F*3, F, use_batchnorm = False)# need to flatten to get equivariant noise N x F x 1
+        self.posterior_logvar_h = Scalar_MLP(2*D, 2*D, D, use_batchnorm = False)
 
-        self.prior_mean_V = Vector_MLP(F,F,F,F)
-        self.prior_mean_h = Scalar_MLP(D, D, D)
-        self.prior_logvar_V = Scalar_MLP(F*3, F*3, F)
-        self.prior_logvar_h = Scalar_MLP(D, D, D)
+        self.prior_mean_V = Vector_MLP(F,F,F,F, use_batchnorm = False)
+        self.prior_mean_h = Scalar_MLP(D, D, D, use_batchnorm = False)
+        self.prior_logvar_V = Scalar_MLP(F*3, F*3, F, use_batchnorm = False)
+        self.prior_logvar_h = Scalar_MLP(D, D, D, use_batchnorm = False)
+        self.bn = VNBatchNorm(F)
 
     def forward(self, A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch):
         (v_A, h_A), (v_B, h_B), geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg = self.ecn(A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch)
         # ipdb.set_trace()
+        print("[Encoder] ecn output V A", torch.min(v_A).item(), torch.max(v_A).item())
+        print("[Encoder] ecn output V B", torch.min(v_B).item(), torch.max(v_B).item())
         posterior_input_V = torch.cat((v_A, v_B), dim = 1) # N x 2F x 3
         posterior_input_h = torch.cat((h_A, h_B), dim = 1) # N x 2D
 
@@ -132,13 +203,31 @@ class Encoder(nn.Module):
         prior_logvar_V = self.prior_logvar_V(v_B.reshape((v_B.shape[0], -1))).unsqueeze(2)
         prior_logvar_h = self.prior_logvar_h(h_B)
 
+        # TODO: try clamping the prior logv to 0
+        prior_logvar_V = torch.clamp(prior_logvar_V, max = 0)
+
         posterior_mean_V = self.posterior_mean_V(posterior_input_V)
+        # print("[Encoder] pre BN posterior mean V", torch.min(posterior_mean_V).item(), torch.max(posterior_mean_V).item()) #, torch.sum(posterior_mean_V, dim = 1))
+        # posterior_mean_V = self.bn(posterior_mean_V) #TODO: Trying VN Batch Norm
         posterior_mean_h = self.posterior_mean_h(posterior_input_h)
         posterior_logvar_V = self.posterior_logvar_V(posterior_input_V.reshape((posterior_input_V.shape[0], -1))).unsqueeze(2)
         posterior_logvar_h = self.posterior_logvar_h(posterior_input_h)
 
+        print("[Encoder] posterior mean V", torch.min(posterior_mean_V).item(), torch.max(posterior_mean_V).item()) #, torch.sum(posterior_mean_V, dim = 1))
+        print("[Encoder] posterior logvar V", torch.min(posterior_logvar_V).item(), torch.max(posterior_logvar_V).item()) #, torch.sum(posterior_logvar_V,  dim = 1))
+        print("[Encoder] posterior mean h", torch.min(posterior_mean_h).item(), torch.max(posterior_mean_h).item(), torch.sum(posterior_mean_h).item())
+        print("[Encoder] posterior logvar h", torch.min(posterior_logvar_h).item(), torch.max(posterior_logvar_h).item(), torch.sum(posterior_logvar_h).item())
+
+        print("[Encoder] prior mean V", torch.min(prior_mean_V).item(), torch.max(prior_mean_V).item()) #, torch.sum(prior_mean_V,  dim = 1))
+        print("[Encoder] prior logvar V", torch.min(prior_logvar_V).item(), torch.max(prior_logvar_V).item()) #, torch.sum(prior_logvar_V,  dim = 1))
+        print("[Encoder] prior mean h", torch.min(prior_mean_h).item(), torch.max(prior_mean_h).item(), torch.sum(prior_mean_h).item())
+        print("[Encoder] prior logvar h", torch.min(prior_logvar_h).item(), torch.max(prior_logvar_h).item(), torch.sum(prior_logvar_h).item())
         Z_V = self.reparameterize(posterior_mean_V, posterior_logvar_V)
+        # if torch.gt(Z_V, 100).any() or  torch.lt(Z_V, -100).any():
+        #         ipdb.set_trace()
+        #         print("Caught Explosion in VAE step")
         Z_h = self.reparameterize(posterior_mean_h, posterior_logvar_h)
+        print("[Encoder] Z_V post vae step", torch.min(Z_V).item(), torch.max(Z_V).item())
 
         A_cg.ndata["Z_V"] = Z_V
         A_cg.ndata["Z_h"] = Z_h
@@ -164,9 +253,13 @@ class Encoder(nn.Module):
         }
         return results, geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg
 
-    def reparameterize(self, mean, logvar):
-        sigma = 1e-12 + torch.exp(logvar / 2)
+    def reparameterize(self, mean, logvar, scale = 1.0):
+        # scale = 0.3 # trying this
+        sigma = 1e-12 + torch.exp(scale*logvar / 2)
         eps = torch.randn_like(mean)
+        # if torch.gt(mean + eps*sigma, 100).any() or  torch.lt(mean + eps*sigma, -100).any():
+        #         ipdb.set_trace()
+        #         print("Caught Explosion in VAE step")
         return mean + eps*sigma
 
     # https://github.com/NVIDIA/NeMo/blob/b9cf05cf76496b57867d39308028c60fef7cb1ba/nemo/collections/nlp/models/machine_translation/mt_enc_dec_bottleneck_model.py#L217
@@ -189,13 +282,34 @@ class Encoder(nn.Module):
         return kl.mean()
 
 class Decoder(nn.Module):
-    def __init__(self, iegmn, D, F, atom_embedder, device = "cuda"):
+    def __init__(self, iegmn, D, F, atom_embedder, device = "cuda", norm="ln", teacher_forcing = True):
         super(Decoder, self).__init__()
         # self.mha = torch.nn.MultiheadAttention(embed_dim = 3, num_heads = 1, batch_first = True)
         self.mha = neko_MultiheadAttention(embed_dim = 3, num_heads = 1, batch_first = True)
         self.iegmn = iegmn
-        self.h_channel_selection = atom_embedder # taken from the FG encoder
+        self.atom_embedder = atom_embedder # taken from the FG encoder
+        self.h_channel_selection = Scalar_MLP(D, 2*D, D)
+        # norm = "ln"
+        if norm == "bn":
+            self.eq_norm = VNBatchNorm(F)
+            self.inv_norm = nn.BatchNorm1d(D)
+            self.eq_norm_2 = VNBatchNorm(3)
+            self.inv_norm_2 = nn.BatchNorm1d(D)
+        elif norm == "ln":
+            self.eq_norm = VNLayerNorm(F)
+            self.inv_norm = nn.LayerNorm(D)
+            self.eq_norm_2 = VNLayerNorm(3)
+            self.inv_norm_2 = nn.LayerNorm(D)
+        else:
+            assert(1 == 0)
         self.device = device
+        # TODO: try Vector_MLP_Flip for traditional MLP formulation not 3DLinkers
+        self.feed_forward_V = Vector_MLP(F, 2*F, 2*F, F, leaky = False, use_batchnorm = False)
+        self.feed_forward_h = Scalar_MLP(D, 2*D, D)
+
+        self.feed_forward_V_3 = Vector_MLP(3, F, F, 3, leaky = False, use_batchnorm = False)
+        self.feed_forward_h_3 = Scalar_MLP(D, 2*D, D)
+        self.teacher_forcing = teacher_forcing
     
     def get_node_mask(self, ligand_batch_num_nodes, receptor_batch_num_nodes, device):
         rows = ligand_batch_num_nodes.sum()
@@ -230,32 +344,64 @@ class Decoder(nn.Module):
         return Q, attn_mask, info
 
     def channel_selection(self, A_cg, B, cg_frag_ids):
-        # ipdb.set_trace()
+        # ! FF + Add Norm
         Z_V = A_cg.ndata["Z_V"]# N x F x 3
         Z_h = A_cg.ndata["Z_h"] # N x D
         N, F, _ = Z_V.shape
         _, D = Z_h.shape
-
+        print("[CC] V input", torch.min(Z_V).item(), torch.max(Z_V).item())
+        print("[CC] h input", torch.min(Z_h).item(), torch.max(Z_h).item())
+        # ipdb.set_trace()
+        Z_V_ff = self.feed_forward_V(Z_V)
+        # Z_h_ff = self.feed_forward_h(Z_h)
+        print("[CC] V input FF", torch.min(Z_V_ff).item(), torch.max(Z_V_ff).item())
+        # print("[CC] h input FF", torch.min(Z_h_ff).item(), torch.max(Z_h_ff).item())
+        Z_V = Z_V_ff + Z_V
+        # Z_h = Z_h_ff + Z_h
+        print("[CC] V input FF add", torch.min(Z_V).item(), torch.max(Z_V).item())
+        # print("[CC] h input FF add", torch.min(Z_h).item(), torch.max(Z_h).item())
+        Z_V = self.eq_norm(Z_V)
+        # Z_h = self.inv_norm(Z_h)
+        print("[CC] V add norm", torch.min(Z_V).item(), torch.max(Z_V).item())
+        # print("[CC] h add norm", torch.min(Z_h).item(), torch.max(Z_h).item())
+        # Equivariant Channel Selection
         Q, attn_mask, cg_to_fg_info = self.get_queries_and_mask(A_cg, B, N, F, cg_frag_ids)
         K = Z_V
         V = Z_V
         attn_out, attn_weights = self.mha(Q, K, V, attn_mask = attn_mask)
-
         res = []
         for idx, k in enumerate(cg_to_fg_info):
             res.append( attn_out[idx, :k, :]) # Pull from the parts that were not padding
         res = torch.cat(res, dim = 0)
         x_cc = res # n x 3
-
-        h_og = B.ndata['rd_feat'] # n x d = 17
-        h_og_lifted = self.h_channel_selection(h_og) # n x D
-        h_cc = h_og_lifted + torch.repeat_interleave(Z_h, torch.tensor(cg_to_fg_info).to(self.device), dim = 0) # n x D
+        # Invariant Channel Selection
+        # h_og = B.ndata['rd_feat'] # n x d = 17
+        # h_og_lifted = self.h_channel_selection(self.atom_embedder(h_og)) # n x D
+        # h_cc = h_og_lifted + torch.repeat_interleave(Z_h, torch.tensor(cg_to_fg_info).to(self.device), dim = 0) # n x D
+        # Second Add Norm
+        print("[CC] V cc attn update", torch.min(x_cc).item(), torch.max(x_cc).item())
+        # print("[CC] h cc mpnn update", torch.min(h_cc).item(), torch.max(h_cc).item())
+        x_cc_ff = self.feed_forward_V_3(x_cc.unsqueeze(2)).squeeze(2)
+        # h_cc_ff = self.feed_forward_h_3(h_cc)
+        print("[CC] V input FF 3", torch.min(x_cc_ff).item(), torch.max(x_cc_ff).item())
+        # print("[CC] h input FF 3", torch.min(h_cc_ff).item(), torch.max(h_cc_ff).item())
+        x_cc = x_cc_ff + x_cc
+        # h_cc = h_cc_ff + h_cc
+        print("[CC] V cc add 2", torch.min(x_cc).item(), torch.max(x_cc).item())
+        # print("[CC] h cc add 2", torch.min(h_cc).item(), torch.max(h_cc).item())
+        x_cc = self.eq_norm_2(x_cc.unsqueeze(2)).squeeze(2)
+        # h_cc = self.inv_norm_2(h_cc)
+        # print("same") #! the above makes it worse for some reason for bn
+        h_cc = self.atom_embedder(B.ndata['rd_feat']) #! testing
+        print("[CC] V cc add norm --> final", torch.min(x_cc).item(), torch.max(x_cc).item())
+        print("[CC] h cc add norm --> final", torch.min(h_cc).item(), torch.max(h_cc).item())
+        print()
         return x_cc, h_cc # we have selected the features for all coarse grain beads in parallel
 
 
     def autoregressive_step(self, latent, prev = None, t = 0, geo_latent = None, geo_current = None):
         # ipdb.set_trace()
-        coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory = self.iegmn(latent, prev, mpnn_only = t==0, geometry_graph_A = geo_latent, geometry_graph_B = geo_current)
+        coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory = self.iegmn(latent, prev, mpnn_only = t==0, geometry_graph_A = geo_latent, geometry_graph_B = geo_current, teacher_forcing=self.teacher_forcing, atom_embedder=self.atom_embedder)
         # coords_A held in latent.ndata['x_now']
         return  coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory
     
@@ -356,9 +502,13 @@ class Decoder(nn.Module):
         current_molecule_ids = None
         current_molecule = None
         geo_current = None
+        # current_count = torch.tensor([0]*len(progress))
         returns = []
+        # TODO implement teacher forcing
         for t in range(max_nodes):
+            # ipdb.set_trace()
             id_batch = frag_batch[t]
+            # print("ID", id_batch)
             latent, geo_latent = self.isolate_next_subgraph(final_molecule, id_batch, true_geo_batch)
             # if not check:
             #     current_molecule = self.adaptive_batching(current_molecule)
@@ -366,14 +516,26 @@ class Decoder(nn.Module):
             coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory = self.autoregressive_step(latent, current_molecule, t, geo_latent, geo_current)
             ref_coords_A = latent.ndata['x_true']
             ref_coords_B = current_molecule.ndata['x_true'] if current_molecule is not None else None
-            returns.append((coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory, id_batch, ref_coords_A, ref_coords_B))
+            ref_coords_B_split = [x.ndata['x_true'] for x in dgl.unbatch(current_molecule)] if current_molecule is not None else None
+            ar_con_input = current_molecule.ndata['x_cc'] if current_molecule is not None else None
+            gen_input = latent.ndata['x_cc']
+            print("[AR step end] geom losses total", geom_losses)
+            print()
+            returns.append((coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory, id_batch, ref_coords_A, ref_coords_B, ref_coords_B_split, gen_input, ar_con_input))
+            # print("ID Check", returns[0][6])
             # print(f'{t} A MSE = {torch.mean(torch.sum(ref_coords_A - coords_A, dim = 1)**2)}')
             # if ref_coords_B is not None:
+            if torch.gt(coords_A, 1000).any() or  torch.lt(coords_A, -1000).any() or (coords_B is not None and torch.gt(coords_B, 1000).any()) or (coords_B is not None and torch.lt(coords_B, -1000).any()):
+                ipdb.set_trace()
+                print("Caught Explosion in Decode step")
+                X_cc, H_cc = self.channel_selection(cg_mol_graph, rdkit_mol_graph, cg_frag_ids)
+                coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory = self.autoregressive_step(latent, current_molecule, t, geo_latent, geo_current)
+
                 # print(f'{t} B MSE = {torch.mean(torch.sum(ref_coords_B - coords_B, dim = 1)**2)}')
             self.update_molecule(final_molecule, id_batch, coords_A, h_feats_A, latent)
             progress -= torch.tensor([len(x) if x is not None else 0 for x in id_batch])
             if t == 0:
-                current_molecule_ids = id_batch
+                current_molecule_ids = copy.deepcopy(id_batch)
             else:
                 for idx, ids in enumerate(id_batch):
                     if ids is None:
@@ -382,118 +544,4 @@ class Decoder(nn.Module):
             # ipdb.set_trace() # erroring on dgl.unbatch(final_molecule) for some odd reason --> fixed by adding an else above
             current_molecule, geo_current = self.gather_current_molecule(final_molecule, current_molecule_ids, progress, true_geo_batch)
 
-        return final_molecule, rdkit_reference, returns
-
-        # def adaptive_batching(self, current_molecule, valid):
-    #     molecules = dgl.unbatch(current_molecule)
-    #     result = []
-    #     for idx, val in valid:
-    #         if val:
-    #             result.append(molecules[idx])
-    #     return dgl.batch(result).to(self.device)
-
-    # def forward_v1(self, cg_mol_graph, rdkit_mol_graph, cg_frag_ids, bond_breaks):
-    #     # ipdb.set_trace()
-    #     X_cc, H_cc = self.channel_selection(cg_mol_graph, rdkit_mol_graph, cg_frag_ids)
-    #     ACGs = dgl.unbatch(cg_mol_graph) # list of graphs
-    #     Bs = dgl.unbatch(rdkit_mol_graph)
-    #     subgraphs = []
-    #     bulk_atoms = 0
-    #     check_done = []
-    #     for idx in range(len(Bs)):
-    #         subgraphs.append(self.split_subgraph_nodes(X_cc, H_cc, Bs[idx], cg_frag_ids[idx], ACGs[idx].ndata['bfs'].flatten(), bond_breaks[idx], start = bulk_atoms))
-    #         bulk_atoms += Bs[idx].num_nodes()
-    #         check_done.append(Bs[idx].num_nodes())
-    #     check_done = torch.tensor(check_done)
-    #     idx_map = {i:i for i in range(len(check_done))}
-        
-    #     future_bonds = [x[1] for x in subgraphs]
-    #     subgraphs = [x[0] for x in subgraphs]
-    #     # ipdb.set_trace()
-    #     ar_batches = defaultdict(list)
-    #     # ar_batches_prev = defaultdict(list) # TODO: replace this with current molecule
-    #     current_molecule = None
-    #     mlen = max([len(x) for x in subgraphs])
-    #     # ipdb.set_trace()
-    #     for sg in subgraphs:
-    #         for idx, val in enumerate(sg):
-    #             assert(idx == val[1])
-    #             ar_batches[idx].append(val[0])
-    #         # for idx in range(len(sg), mlen):
-    #         #     ar_batches[idx].append(dgl.graph([])) # graph padding doe not work
-    #         # for idx in range(1, len(sg)-1):
-    #         #     ar_batches_prev[idx].extend(ar_batches[idx-1])
-    #     dgl_ar_batches = [dgl.batch(ar_batches[k]) for k in range(len(ar_batches))]
-    #     # ipdb.set_trace()
-    #     # aaa = dgl.unbatch(dgl_ar_batches[0])[0]
-    #     # aa = dgl.unbatch(dgl_ar_batches[1])[0]
-    #     # dgl_ar_batches_prev = [dgl.batch(ar_batches_prev[k]) if len(ar_batches_prev[k]) > 0 else None for k in range(len(ar_batches_prev))]
-    #     #TODO: figure out how to do the pruning of the current Molecule!!!!!!!!!!
-    #     final_molecules = {}
-    #     for t in range(len(dgl_ar_batches)):
-    #         latent = dgl_ar_batches[t]
-    #         prev = current_molecule
-    #         # TODO merge with valid graphs of latent t-1. design this better
-    #         # ! See dgl.merge and add_eges
-
-    #         #TODO weird edge error likely due to poor data creation
-    #         coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory = self.autoregressive_step(latent, prev, t) # TODO: implent distance reularization with ground truth distance graph
-    #         ipdb.set_trace()
-    #         latent.ndata['x_cc'] = coords_A
-    #         latent.ndata['feat_cc'] = h_feats_A
-    #         current_molecule = latent
-    #         # TODO: check _ID of latent to see waht happens
-    #         progress = latent.batch_num_nodes().cpu()
-    #         check_done -= progress
-    #         print(check_done)
-    #         # TODO
-    #         # current_moleculcheck_don, check_done, idx_map = self.merge(latent, prev, future_bonds, check_done, final_molecules)
-    #         # if there is a 0 remove it and pluck
-    #     return final_molecules
-
-    
-    # def merge(self, latent, current, future_bonds, check_done, final_molecules):
-    #     return latent, check_done, idx_map
-
-
-
-
-    
-# def split_subgraph_nodes(self, X, H, fine, frag_ids, bfs_order, bond_breaks, start = 0):
-    #     # ipdb.set_trace()
-    #     result = []
-    #     for idx, atom_ids in enumerate(frag_ids):
-    #         og_atom_ids = list(atom_ids)
-    #         atom_ids = [x+start for x in atom_ids]
-    #         coords = X[atom_ids, :]
-    #         feats = H[atom_ids, :]
-    #         # result.append( (coords, feats, bfs_order[idx]))
-    #         # subg = fine.subgraph(og_atom_ids)
-    #         # ipdb.set_trace()
-    #         subg = dgl.node_subgraph(fine, og_atom_ids) #, relabel_nodes = False) # relabel does not work but we do have "_ID"
-    #         subg.ndata['x_cc'] = coords
-    #         subg.ndata['feat_cc'] = feats # here the rdkit Fine is being overwritten with the result of our attention operation as wanted
-    #         # TDO: better off creating a new function to create a subgraph instead of resetting stuff
-    #         result.append( (subg, bfs_order[idx]))
-    #     result.sort(key=lambda x: x[-1])
-
-    #     future_bonds = defaultdict(list)
-    #     sorted_frags = list(zip(frag_ids, bfs_order))
-    #     sorted_frags.sort(key = lambda d: d[1])
-    #     frags_ids = [x for x, y in sorted_frags]
-    #     u, v = fine.edges() # TDO can create live 4 angstrom cutoff
-    #     # ipdb.set_trace()
-    #     for idx, ab in enumerate(zip(u.tolist(), v.tolist())):
-    #         a, b = ab
-    #         a_check = [1 if a in check  else 0 for check in frags_ids]
-    #         b_check = [1 if b in check else 0 for check in frags_ids]
-    #         aa, bb = np.argmax(a_check), np.argmax(b_check)
-    #         if aa == bb:
-    #             continue
-    #         future_bonds[max(aa, bb)].append((a,b)) # this should include the bond_breaks
-    #     return result, future_bonds
-
-    # def split_subgraph_edges(self, X, H, fine, frag_ids, bfs_order, bond_breaks, start = 0):
-    #     # ipdb.set_trace()
-    #     result = []
-    #     return result, future_bonds
+        return final_molecule, rdkit_reference, returns, (X_cc, H_cc)

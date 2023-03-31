@@ -198,6 +198,14 @@ class IEGMN_Bidirectional_Layer(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(self.out_feats_dim_h, 1)
             )
+        # self.reset_parameters()
+        self.apply(self._init_weights)
+        
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.xavier_normal_(module.weight, gain = 1.)
+            if module.bias is not None:
+                module.bias.data.zero_()
 
     def reset_parameters(self):
         for p in self.parameters():
@@ -210,7 +218,6 @@ class IEGMN_Bidirectional_Layer(nn.Module):
         if self.use_dist_in_layers:# and self.A_evolve:
             # ipdb.set_trace()
             x_rel_mag = edges.data['x_rel_cc'] ** 2
-            # print(x_rel_mag.device, edges.src['feat'].device, edges.dst['feat'].device, edges.data['feat'].device)
             x_rel_mag = torch.sum(x_rel_mag, dim=1, keepdim=True)
             x_rel_mag = torch.cat([torch.exp(-x_rel_mag / sigma) for sigma in self.all_sigmas_dist], dim=-1)
             return {'msg_cc': self.A_edge_mlp(
@@ -246,6 +253,7 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             # ipdb.set_trace()
             A_graph.ndata['x_now_cc'] = coords_A
             A_graph.ndata['feat_cc'] = h_feats_A  # first time set here
+            print("[DEC single] forward input Coords A", torch.min(coords_A).item(), torch.max(coords_A).item(), torch.norm(coords_A, 2).item())
 
             # if self.A_evolve:
             A_graph.apply_edges(fn.u_sub_v('x_now_cc', 'x_now_cc', 'x_rel_cc'))  # x_i - x_j
@@ -268,6 +276,7 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             x_evolved_A = self.x_connection_init * orig_coords_A + (1. - self.x_connection_init) * A_graph.ndata['x_now_cc'] + A_graph.ndata['x_update_cc']
             # else:
             #     x_evolved_A = coords_A
+            print("   [DEC MPNN] X A", torch.min(x_evolved_A).item(), torch.max(x_evolved_A).item(), torch.norm(x_evolved_A, 2).item())
 
 
             # Equation 4: Aggregate messages
@@ -297,7 +306,10 @@ class IEGMN_Bidirectional_Layer(nn.Module):
                     geometry_graph_A.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),
                                               fn.sum('partial_grads_msg', 'grad_x_evolved'))
                     grad_x_evolved = geometry_graph_A.ndata['grad_x_evolved']
+                    print("     [DEC DR] distance reg delta A", torch.min(self.geometry_reg_step_size * grad_x_evolved).item(), torch.max(self.geometry_reg_step_size * grad_x_evolved).item())
+                    print("     [DEC DR] distance reg start A", torch.min(x_evolved_A).item(), torch.max(x_evolved_A).item())
                     x_evolved_A = x_evolved_A + self.geometry_reg_step_size * grad_x_evolved
+                    print("     [DEC DR] distance reg update A", torch.min(x_evolved_A).item(), torch.max(x_evolved_A).item())
                     if self.save_trajectories:
                         trajectory.append(x_evolved_A.detach().cpu())
                 # skip_for_now = True
@@ -314,10 +326,12 @@ class IEGMN_Bidirectional_Layer(nn.Module):
                 node_upd_A = self.skip_weight_h * self.node_mlp_A(input_node_upd_A) + (1. - self.skip_weight_h) * h_feats_A
                 # node_upd_B = self.skip_weight_h * self.node_mlp_B(input_node_upd_B) + (1. - self.skip_weight_h) * h_feats_B
             else:
+                assert(1 == 0)
                 node_upd_A = self.node_mlp_A(input_node_upd_A) # phi^h
                 # node_upd_B = self.node_mlp_B(input_node_upd_B)
 
             node_upd_A = apply_norm(A_graph, node_upd_A, self.final_h_layer_norm, self.final_h_layernorm_layer_A)
+            print("   [DEC MPNN] feat A", torch.min(node_upd_A).item(), torch.max(node_upd_A).item(), torch.norm(node_upd_A, 2).item())
             return x_evolved_A, node_upd_A, None, None, trajectory, geom_loss
 
     def forward(self, A_graph, B_graph, coords_A, h_feats_A, original_A_node_features, orig_coords_A,
@@ -328,6 +342,10 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             B_graph.ndata['x_now_cc'] = coords_B
             A_graph.ndata['feat_cc'] = h_feats_A  # first time set here
             B_graph.ndata['feat_cc'] = h_feats_B
+            print("[DEC start] forward input Coords A", torch.min(coords_A).item(), torch.max(coords_A).item())
+            print("[DEC start] forward input Coords B", torch.min(coords_B).item(), torch.max(coords_B).item())
+            print("[DEC start] forward input feat A", torch.min(h_feats_A).item(), torch.max(h_feats_A).item())
+            print("[DEC start] forward input feats B", torch.min(h_feats_B).item(), torch.max(h_feats_B).item())
 
             # if self.A_evolve:
             A_graph.apply_edges(fn.u_sub_v('x_now_cc', 'x_now_cc', 'x_rel_cc'))  # x_i - x_j
@@ -359,10 +377,14 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             x_evolved_A = self.x_connection_init * orig_coords_A + (1. - self.x_connection_init) * A_graph.ndata['x_now_cc'] + A_graph.ndata['x_update_cc']
             # if self.B_evolve:
             B_graph.update_all(self.update_x_moment_B, fn.mean('m_cc', 'x_update_cc'))
+            print("            [DEC MPNN] orig B ", torch.min(orig_coords_B).item(), torch.max(orig_coords_B).item(), torch.norm(orig_coords_B, 2).item())
+            print("            [DEC MPNN] now B ", torch.min(B_graph.ndata['x_now_cc']).item(), torch.max(B_graph.ndata['x_now_cc']).item(), torch.norm(B_graph.ndata['x_now_cc'], 2).item())
+            print("            [DEC MPNN] update B ", torch.min(B_graph.ndata['x_update_cc']).item(), torch.max(B_graph.ndata['x_update_cc']).item(), torch.norm(B_graph.ndata['x_update_cc'], 2).item())
             x_evolved_B = self.x_connection_init * orig_coords_B + (1. - self.x_connection_init) * B_graph.ndata['x_now_cc'] + B_graph.ndata['x_update_cc']
             # else:
                 # x_evolved_B = coords_B
-
+            print("   [DEC MPNN] X evolved A", torch.min(x_evolved_A).item(), torch.max(x_evolved_A).item(), torch.norm(x_evolved_A, 2).item())
+            print("   [DEC MPNN] X evolved B", torch.min(x_evolved_B).item(), torch.max(x_evolved_B).item(), torch.norm(x_evolved_B, 2).item())
             # Equation 4: Aggregate messages
             A_graph.update_all(fn.copy_e('msg_cc', 'm_cc'), fn.mean('m_cc', 'aggr_msg_cc'))#copy_edge
             B_graph.update_all(fn.copy_e('msg_cc', 'm_cc'), fn.mean('m_cc', 'aggr_msg_cc'))
@@ -380,7 +402,7 @@ class IEGMN_Bidirectional_Layer(nn.Module):
                     src, dst = geometry_graph_B.edges()
                     src = src.long()
                     dst = dst.long()
-                    d_squared = torch.sum((x_evolved_B[src] - x_evolved_B[dst]) ** 2, dim=1) #TODO why is this plus
+                    d_squared = torch.sum((x_evolved_B[src] - x_evolved_B[dst]) ** 2, dim=1)
                     geom_loss += torch.sum((d_squared - geometry_graph_B.edata['feat'] ** 2) ** 2)
                 # skip_for_now = True
                 # geom_loss = 0
@@ -398,7 +420,10 @@ class IEGMN_Bidirectional_Layer(nn.Module):
                     geometry_graph_A.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),
                                               fn.sum('partial_grads_msg', 'grad_x_evolved'))
                     grad_x_evolved = geometry_graph_A.ndata['grad_x_evolved']
+                    print("     [DEC DR] distance reg delta A", torch.min(self.geometry_reg_step_size * grad_x_evolved).item(), torch.max(self.geometry_reg_step_size * grad_x_evolved).item())
+                    print("     [DEC DR] distance reg start A", torch.min(x_evolved_A).item(), torch.max(x_evolved_A).item())
                     x_evolved_A = x_evolved_A + self.geometry_reg_step_size * grad_x_evolved
+                    print("     [DEC DR] distance reg update A", torch.min(x_evolved_A).item(), torch.max(x_evolved_A).item())
                     if self.save_trajectories:
                         trajectory.append(x_evolved_A.detach().cpu())
                 if geometry_graph_B is not None:
@@ -412,7 +437,10 @@ class IEGMN_Bidirectional_Layer(nn.Module):
                         geometry_graph_B.edata['partial_grads'] = 2 * (d_squared - geometry_graph_B.edata['feat'] ** 2)[:,None] * grad_d_squared
                         geometry_graph_B.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),fn.sum('partial_grads_msg', 'grad_x_evolved'))
                         grad_x_evolved = geometry_graph_B.ndata['grad_x_evolved']
+                        print("     [DEC DR] distance reg delta B", torch.min(self.geometry_reg_step_size * grad_x_evolved).item(), torch.max(self.geometry_reg_step_size * grad_x_evolved).item())
+                        print("     [DEC DR] distance reg start B", torch.min(x_evolved_B).item(), torch.max(x_evolved_B).item())
                         x_evolved_B = x_evolved_B + self.geometry_reg_step_size * grad_x_evolved
+                        print("     [DEC DR] distance reg update B", torch.min(x_evolved_B).item(), torch.max(x_evolved_B).item())
                 # skip_for_now = True
 
             input_node_upd_A = torch.cat((self.node_norm(A_graph.ndata['feat_cc']),
@@ -432,6 +460,7 @@ class IEGMN_Bidirectional_Layer(nn.Module):
                 node_upd_A = self.skip_weight_h * self.node_mlp_A(input_node_upd_A) + (1. - self.skip_weight_h) * h_feats_A
                 node_upd_B = self.skip_weight_h * self.node_mlp_B(input_node_upd_B) + (1. - self.skip_weight_h) * h_feats_B
             else:
+                assert(1 == 0)
                 node_upd_A = self.node_mlp_A(input_node_upd_A) # phi^h
                 node_upd_B = self.node_mlp_B(input_node_upd_B)
 
@@ -442,9 +471,13 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             #         log(torch.min(p.abs()), 'min of abs node_mlp_params')
             #     log(torch.max(input_node_upd_A.abs()), 'concat(h_i, aggr_msg, aggr_cross_msg)')
             #     log(torch.max(node_upd_A), 'h_i new = h_i + MLP(h_i, aggr_msg, aggr_cross_msg)')
-
+            print("   [DEC MPNN] pre norm feat A", torch.min(node_upd_A).item(), torch.max(node_upd_A).item(), torch.norm(node_upd_A, 2).item())
+            print("   [DEC MPNN] pre norm feat B", torch.min(node_upd_B).item(), torch.max(node_upd_B).item(), torch.norm(node_upd_B, 2).item())
             node_upd_A = apply_norm(A_graph, node_upd_A, self.final_h_layer_norm, self.final_h_layernorm_layer_A)
             node_upd_B = apply_norm(B_graph, node_upd_B, self.final_h_layer_norm, self.final_h_layernorm_layer_B)
+            print("   [DEC MPNN] feat A", torch.min(node_upd_A).item(), torch.max(node_upd_A).item(), torch.norm(node_upd_A, 2).item())
+            print("   [DEC MPNN] feat B", torch.min(node_upd_B).item(), torch.max(node_upd_B).item(), torch.norm(node_upd_B, 2).item())
+            print()
             return x_evolved_A, node_upd_A, x_evolved_B, node_upd_B, trajectory, geom_loss
 
     def __repr__(self):
@@ -561,18 +594,25 @@ class IEGMN_Bidirectional(nn.Module):
             else:
                 torch.nn.init.zeros_(p)
 
-    def forward(self, A_graph, B_graph, geometry_graph_A = None, geometry_graph_B = None, complex_names = "test", mpnn_only = False): #epoch
+    def forward(self, A_graph, B_graph, geometry_graph_A = None, geometry_graph_B = None, complex_names = "test", mpnn_only = False, teacher_forcing = False, atom_embedder = None): #epoch
         orig_coords_A = A_graph.ndata['x_cc'] #.to(self.device)
         if mpnn_only:
             orig_coords_B = None
         else:
-            orig_coords_B = B_graph.ndata['x_cc'] #.to(self.device)
+            # orig_coords_B = B_graph.ndata['x_cc'] #.to(self.device)
+            if teacher_forcing:
+                orig_coords_B = B_graph.ndata['x_true']
+            else:
+                orig_coords_B = B_graph.ndata['x_cc']
 
         coords_A = A_graph.ndata['x_cc']
         if mpnn_only:
             coords_B = None
         else:
-           coords_B = B_graph.ndata['x_cc']
+            if teacher_forcing:
+                coords_B = B_graph.ndata['x_true']
+            else:
+                coords_B = B_graph.ndata['x_cc']
 
         # h_feats_A = self.atom_embedder(A_graph.ndata['feat']) # SHould already be in D dim
         # h_feats_B = self.atom_embedder(B_graph.ndata['feat'])
@@ -580,8 +620,14 @@ class IEGMN_Bidirectional(nn.Module):
         if mpnn_only:
             h_feats_B = None
         else:
-           h_feats_B = B_graph.ndata['feat_cc']
+            if teacher_forcing:
+                h_feats_B = atom_embedder(B_graph.ndata['mol_feat'])
+            else:
+                h_feats_B = B_graph.ndata['feat_cc']
         # ipdb.set_trace()
+        print("[DEC Outer start] forward input Coords A", torch.min(coords_A).item(), torch.max(coords_A).item())
+        if not mpnn_only:
+            print("[DEC Outer start] forward input Coords B", torch.min(coords_B).item(), torch.max(coords_B).item())
 
         # rand_dist = torch.distributions.normal.Normal(loc=0, scale=self.random_vec_std)
         # rand_h_A = rand_dist.sample([h_feats_A.size(0), self.random_vec_dim]).to(self.device)
@@ -654,6 +700,28 @@ class IEGMN_Bidirectional(nn.Module):
                                 geometry_graph_B=geometry_graph_B,
                                 mpnn_only=mpnn_only
                                 )
+            # #! Trying teacher forcing at each layer
+            # coords_A, \
+            # h_feats_A, \
+            # cat, \
+            # dog, trajectory, geom_loss = layer(A_graph=A_graph,
+            #                     B_graph=B_graph,
+            #                     coords_A=coords_A,
+            #                     h_feats_A=h_feats_A,
+            #                     original_A_node_features=original_A_node_features,
+            #                     orig_coords_A=orig_coords_A,
+            #                     coords_B=coords_B,
+            #                     h_feats_B=h_feats_B,
+            #                     original_B_node_features=original_B_node_features,
+            #                     orig_coords_B=orig_coords_B,
+            #                     mask=mask,
+            #                     geometry_graph_A=geometry_graph_A,
+            #                     geometry_graph_B=geometry_graph_B,
+            #                     mpnn_only=mpnn_only
+            #                     )
+            print("[Decoder MPNN] geom loss of IEGMN layer", geom_loss.item())
+            if geom_loss.item() > 1e10:
+                ipdb.set_trace()
             geom_losses = geom_losses + geom_loss
             full_trajectory.extend(trajectory)
         return coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory

@@ -199,6 +199,14 @@ class Fine_Grain_Layer(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(self.out_feats_dim_h, 1)
             )
+        # self.reset_parameters()
+        self.apply(self._init_weights)
+        
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.xavier_normal_(module.weight, gain = 1.)
+            if module.bias is not None:
+                module.bias.data.zero_()
 
     def reset_parameters(self):
         for p in self.parameters():
@@ -343,7 +351,10 @@ class Fine_Grain_Layer(nn.Module):
                     geometry_graph_A.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),
                                               fn.sum('partial_grads_msg', 'grad_x_evolved'))
                     grad_x_evolved = geometry_graph_A.ndata['grad_x_evolved']
+                    print("     [ENC Fine DR] distance reg delta A", torch.min(self.geometry_reg_step_size * grad_x_evolved).item(), torch.max(self.geometry_reg_step_size * grad_x_evolved).item())
+                    print("     [ENC Fine DR] distance reg start A", torch.min(x_evolved_A).item(), torch.max(x_evolved_A).item())
                     x_evolved_A = x_evolved_A + self.geometry_reg_step_size * grad_x_evolved
+                    print("     [ENC Fine DR] distance reg update A", torch.min(x_evolved_A).item(), torch.max(x_evolved_A).item())
                     if self.save_trajectories:
                         trajectory.append(x_evolved_A.detach().cpu())
 
@@ -357,10 +368,11 @@ class Fine_Grain_Layer(nn.Module):
                     geometry_graph_B.edata['partial_grads'] = 2 * (d_squared - geometry_graph_B.edata['feat'] ** 2)[:,None] * grad_d_squared
                     geometry_graph_B.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),fn.sum('partial_grads_msg', 'grad_x_evolved'))
                     grad_x_evolved = geometry_graph_B.ndata['grad_x_evolved']
+                    print("     [ENC Fine DR] distance reg delta B", torch.min(self.geometry_reg_step_size * grad_x_evolved).item(), torch.max(self.geometry_reg_step_size * grad_x_evolved).item())
+                    print("     [ENC Fine DR] distance reg start B", torch.min(x_evolved_B).item(), torch.max(x_evolved_B).item())
                     x_evolved_B = x_evolved_B + self.geometry_reg_step_size * grad_x_evolved
-
-
-
+                    print("     [ENC Fine DR] distance reg update B", torch.min(x_evolved_B).item(), torch.max(x_evolved_B).item())
+                    
             if self.debug:
                 log(torch.max(A_graph.ndata['aggr_msg'].abs()), 'data[aggr_msg]: \sum_j m_{i->j} ')
                 # if self.A_evolve:
@@ -579,6 +591,14 @@ class Pooling_Layer(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(self.out_feats_dim_h, 1)
             )
+        # self.reset_parameters()
+        self.apply(self._init_weights)
+        
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.xavier_normal_(module.weight, gain = 1.)
+            if module.bias is not None:
+                module.bias.data.zero_()
 
     def reset_parameters(self):
         for p in self.parameters():
@@ -891,6 +911,14 @@ class Coarse_Grain_Layer(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(self.out_feats_dim_h, 1)
             )
+        # self.reset_parameters()
+        self.apply(self._init_weights)
+        
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.xavier_normal_(module.weight, gain = 1.)
+            if module.bias is not None:
+                module.bias.data.zero_()
 
     def reset_parameters(self):
         for p in self.parameters():

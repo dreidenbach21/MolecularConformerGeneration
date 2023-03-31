@@ -182,21 +182,9 @@ class ECN3D(nn.Module):
                                 dropout=dropout,
                                 save_trajectories=save_trajectories,
                                 weight_sharing = self.weight_sharing, **kwargs))
-      
-
-    def reset_parameters(self):
-        for p in self.parameters():
-            if p.dim() > 1:
-                torch.nn.init.xavier_normal_(p, gain=1.)
-            else:
-                torch.nn.init.zeros_(p)
 
     def forward(self, A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool,
                   A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch, single = False):
-        
-        if single:
-            assert(False)
-            #TODO: create a path for just a single graph
             
         orig_coords_A = A_graph.ndata['x']
         orig_coords_B = B_graph.ndata['x']
