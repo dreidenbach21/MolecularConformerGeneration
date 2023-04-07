@@ -8,7 +8,7 @@ import torch
 from torch import nn
 from dgl import function as fn
 
-from embedding import AtomEncoder, A_feature_dims
+# from embedding import AtomEncoder, A_feature_dims
 from logger import log
 from model_utils import *
 from equivariant_model_utils import *
@@ -20,8 +20,8 @@ class Pooling_3D_Layer(nn.Module):
             # orig_invar_feats_dim_h, #orig_h_feats_dim,
             invar_feats_dim_h, #h_feats_dim,  # in dim of h
             out_feats_dim_h, #out_feats_dim,  # out dim of h
-            A_input_edge_feats_dim, #lig_input_edge_feats_dim,
-            B_input_edge_feats_dim, #rec_input_edge_feats_dim,
+            edge_feats_dim, #lig_input_edge_feats_dim,
+            # B_input_edge_feats_dim, #rec_input_edge_feats_dim,
             nonlin,
             cross_msgs, #TODO boolean need for consistency until we switch to hydra
             layer_norm,
@@ -49,8 +49,8 @@ class Pooling_3D_Layer(nn.Module):
             geom_reg_steps= 1,
             geometry_reg_step_size=0.1,
             weight_sharing=True,
-            # A_input_edge_feats_dim = None,
-            # B_input_edge_feats_dim = None
+            A_input_edge_feats_dim = None,
+            B_input_edge_feats_dim = None
     ):
 
         super(Pooling_3D_Layer, self).__init__()
@@ -76,9 +76,9 @@ class Pooling_3D_Layer(nn.Module):
         self.loss_geometry_regularization = loss_geometry_regularization
         self.geometry_regularization = geometry_regularization
         self.geom_reg_steps = geom_reg_steps
-
+        # import ipdb; ipdb.set_trace()
         # EDGES
-        A_edge_mlp_input_dim = (invar_feats_dim_h * 2) + A_input_edge_feats_dim
+        A_edge_mlp_input_dim = (invar_feats_dim_h * 2) + edge_feats_dim
         if self.use_dist_in_layers: 
             A_edge_mlp_input_dim += len(self.all_sigmas_dist)
 
@@ -94,7 +94,7 @@ class Pooling_3D_Layer(nn.Module):
         if self.weight_sharing:
             self.B_edge_mlp = self.A_edge_mlp
         else:
-            B_edge_mlp_input_dim = (invar_feats_dim_h * 2) + B_input_edge_feats_dim
+            B_edge_mlp_input_dim = (invar_feats_dim_h * 2) + edge_feats_dim
             if self.use_dist_in_layers: #and self.B_evolve
                 B_edge_mlp_input_dim += len(self.all_sigmas_dist)
             # if self.standard_norm_order:
@@ -216,6 +216,7 @@ class Pooling_3D_Layer(nn.Module):
 
     def apply_edges_A(self, edges):
         if self.use_dist_in_layers:# and self.A_evolve:
+            # import ipdb; ipdb.set_trace()
             x_rel_mag = edges.data['x_rel_m'] ** 2
             # print(x_rel_mag.device, edges.src['feat'].device, edges.dst['feat'].device, edges.data['feat'].device)
             x_rel_mag = torch.sum(x_rel_mag, dim=1, keepdim=True)
@@ -290,6 +291,7 @@ class Pooling_3D_Layer(nn.Module):
             B_pool.apply_edges(fn.u_sub_v('x_fine', 'x_coarse','x_rel_m'))
             B_pool.apply_edges(fn.u_sub_v('x_now', 'x_now','x_rel'))
 
+            # import ipdb; ipdb.set_trace()
             A_pool.apply_edges(self.apply_edges_A)  ## i->j edge:  [h_i h_j] phi^e edge_mlp
             B_pool.apply_edges(self.apply_edges_B) #apply_edges_rec)
             # Equation 1 message passing to create 'msg'

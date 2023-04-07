@@ -8,7 +8,7 @@ import torch
 from torch import nn
 from dgl import function as fn
 
-from embedding import AtomEncoder, A_feature_dims
+# from embedding import AtomEncoder, A_feature_dims
 from logger import log
 from model_utils import *
 import ipdb
@@ -19,8 +19,6 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             orig_invar_feats_dim_h, #orig_h_feats_dim,
             invar_feats_dim_h, #h_feats_dim,  # in dim of h
             out_feats_dim_h, #out_feats_dim,  # out dim of h
-            A_input_edge_feats_dim, #lig_input_edge_feats_dim,
-            B_input_edge_feats_dim, #rec_input_edge_feats_dim,
             nonlin,
             cross_msgs, #boolean
             layer_norm,
@@ -48,6 +46,9 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             geom_reg_steps= 1,
             geometry_reg_step_size=0.1,
             weight_sharing=True,
+            edge_feats_dim = 20, #Unused
+            A_input_edge_feats_dim = None, #lig_input_edge_feats_dim,
+            B_input_edge_feats_dim = None, #rec_input_edge_feats_dim,
     ):
 
         super(IEGMN_Bidirectional_Layer, self).__init__()
@@ -80,7 +81,7 @@ class IEGMN_Bidirectional_Layer(nn.Module):
         self.weight_sharing = weight_sharing
 
         # EDGES
-        A_edge_mlp_input_dim = (invar_feats_dim_h * 2) #+ A_input_edge_feats_dim #! removed the edge features
+        A_edge_mlp_input_dim = (invar_feats_dim_h * 2) #+ edge_feats_dim #! removed the edge features
         if self.use_dist_in_layers:# and self.A_evolve: #TRUE and TRUE
             A_edge_mlp_input_dim += len(self.all_sigmas_dist)
         # if self.standard_norm_order: # TRUE
@@ -95,7 +96,7 @@ class IEGMN_Bidirectional_Layer(nn.Module):
         if self.weight_sharing:
             self.B_edge_mlp = self.A_edge_mlp
         else:
-            B_edge_mlp_input_dim = (invar_feats_dim_h * 2) #+ B_input_edge_feats_dim
+            B_edge_mlp_input_dim = (invar_feats_dim_h * 2) #+ edge_feats_dim
             if self.use_dist_in_layers:# and self.B_evolve:
                 B_edge_mlp_input_dim += len(self.all_sigmas_dist)
             # if self.standard_norm_order:
@@ -621,7 +622,7 @@ class IEGMN_Bidirectional(nn.Module):
             h_feats_B = None
         else:
             if teacher_forcing:
-                h_feats_B = atom_embedder(B_graph.ndata['mol_feat'])
+                h_feats_B = atom_embedder(B_graph.ndata['ref_feat'])
             else:
                 h_feats_B = B_graph.ndata['feat_cc']
         # ipdb.set_trace()

@@ -14,6 +14,7 @@ import scipy.spatial as spa
 from scipy import spatial
 from scipy.special import softmax
 from embedding import *
+import networkx as nx
 
 def GetDihedral(conf, atom_idx):
     return rdMolTransforms.GetDihedralRad(conf, atom_idx[0], atom_idx[1], atom_idx[2], atom_idx[3])
@@ -181,9 +182,34 @@ def mol2graph(mol, name = "test", radius=4, max_neighbors=None, use_rdkit_coords
     graph.ndata['mu_r_norm'] = torch.from_numpy(np.array(mean_norm_list).astype(np.float32))
     return graph
 
+def get_torsion_angles(mol):
+    torsions_list = []
+    G = nx.Graph()
+    for i, atom in enumerate(mol.GetAtoms()):
+        G.add_node(i)
+    nodes = set(G.nodes())
+    for bond in mol.GetBonds():
+        start, end = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
+        G.add_edge(start, end)
+    for e in G.edges():
+        G2 = copy.deepcopy(G)
+        G2.remove_edge(*e)
+        if nx.is_connected(G2): continue
+        l = list(sorted(nx.connected_components(G2), key=len)[0])
+        if len(l) < 2: continue
+        n0 = list(G2.neighbors(e[0]))
+        n1 = list(G2.neighbors(e[1]))
+        torsions_list.append(
+            (n0[0], e[0], e[1], n1[0])
+        )
+    return torsions_list
+
 def coarsen_molecule(m):
     m = Chem.AddHs(m) #the GEOM dataset molecules have H's
     torsions = get_torsions_geo([m])
+    print("torsion angles", torsions)
+    torsions = get_torsion_angles(m)
+    print("other method", torsions)
     if len(torsions) > 0:
         bond_break = [(b,c) for a,b,c,d in torsions]
         adj = Chem.rdmolops.GetAdjacencyMatrix(m)
@@ -331,14 +357,15 @@ def conditional_coarsen_3d(dgl_graph, frag_ids, cg_map, radius=4, max_neighbors=
             if len(dst) == 0:
                 dst = list(np.argsort(distance[i, :]))[1:2]  # closest would be the index i itself > self loop
                 log(
-                    f'The lig_radius {radius} was too small for one lig atom such that it had no neighbors. So we connected {i} to the closest other lig atom {dst}')
+                    f'The lig_radius {radius} was too small for one lig atom such that it had no neighbors. So we connected {i} to the closest other lig atom {dst}\n')
+                # print(dgl_graph.ndata['x'].shape, frag_ids,  cg_map)
             assert i not in dst
             assert dst != []
             
             required_dst = cg_map[i]
             for d in required_dst:
                 if d not in dst:
-                    print("[Required] adding CG edge")
+                    print("[Required] adding CG edge", i, d, distance[i, d])
                     dst.append(d)
             
             src = [i] * len(dst)
@@ -388,7 +415,11 @@ def get_rdkit_coords(mol, seed = None):
         print('rdkit coords could not be generated without using random coords. using random coords now.')
         ps.useRandomCoords = True
         AllChem.EmbedMolecule(mol, ps)
-        AllChem.MMFFOptimizeMolecule(mol, confId=0)
+        try:
+            AllChem.MMFFOptimizeMolecule(mol, confId=0)
+        except:
+            print("RDKit cannot generate conformer for: ", Chem.MolToSmiles(mol))
+            return None
     else:
         AllChem.MMFFOptimizeMolecule(mol, confId=0)
     conf = mol.GetConformer()

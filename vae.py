@@ -28,6 +28,9 @@ class VAE(nn.Module):
         self.lambda_x_cc = 0
         self.lambda_h_cc = 0 #1e-2
 
+    def flip_teacher_forcing(self):
+        self.decoder.teacher_forcing = not self.decoder.teacher_forcing
+        
     def forward(self, frag_ids, A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch):
         enc_out = self.encoder(A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch)
         results, geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg = enc_out
@@ -48,7 +51,7 @@ class VAE(nn.Module):
         print("[Loss Func] KL V", kl_v)
         print("kl h", kl_h)
         print("KL prior reg kl", kl_v_reg)
-        if step < 20:
+        if step < 50:
             kl_loss = torch.tensor(0)
         else:
             kl_loss = self.kl_v_beta*kl_v + self.kl_h_beta*kl_h + self.kl_reg_beta*kl_v_reg
@@ -123,11 +126,15 @@ class VAE(nn.Module):
         loss = self.mse(true, generated)
         return loss
     
-    def ar_loss_step(self, coords, coords_ref, chunks, align = False, step = 1, first_step = 10):
+    def ar_loss_step(self, coords, coords_ref, chunks, align = False, step = 1, first_step = 1):
         loss = 0
         start = 0
         for chunk in chunks:
-            loss += self.rmsd(coords[start: start + chunk, :], coords_ref[start:start+chunk, :], align)
+            sub_loss = self.rmsd(coords[start: start + chunk, :], coords_ref[start:start+chunk, :], align)
+            print("       ", sub_loss.cpu().item(), coords[start: start + chunk, :].shape)
+            if coords[start: start + chunk, :].shape[0] == 1:
+                print("       ", coords[start: start + chunk, :], coords_ref[start: start + chunk, :])
+            loss += sub_loss
             start += chunk
         if step == 0:
             loss *= first_step
@@ -268,7 +275,7 @@ class Encoder(nn.Module):
         # prior = torch.distributions.Normal(loc=z_mean_prior, scale=torch.exp(0.5 * z_logv_prior))
         # loss = (reconstruction( MSE = negative log prob) + self.kl_beta * KL)
         # Dkl( P || Q) # i added the .sum()
-        # ipdb.set_trace()
+        # ipdb.set_trace() #TODO look into softplus instead of exp
         p_std = 1e-12 + torch.exp(z_logvar / 2)
         q_std = 1e-12 + torch.exp(z_logvar_prior / 2)
         q_mean = z_mean_prior
@@ -331,6 +338,7 @@ class Decoder(nn.Module):
         # for x in info:
         #     queries.append(B_batch.ndata['x'][prev:prev+ x, :])
         #     prev += x
+        # import ipdb; ipdb.set_trace()
         splits = sum(splits, []) # flatten
         for x in splits:
             queries.append(B.ndata['x'][list(x), :])
@@ -392,7 +400,7 @@ class Decoder(nn.Module):
         x_cc = self.eq_norm_2(x_cc.unsqueeze(2)).squeeze(2)
         # h_cc = self.inv_norm_2(h_cc)
         # print("same") #! the above makes it worse for some reason for bn
-        h_cc = self.atom_embedder(B.ndata['rd_feat']) #! testing
+        h_cc = self.atom_embedder(B.ndata['ref_feat']) #! testing
         print("[CC] V cc add norm --> final", torch.min(x_cc).item(), torch.max(x_cc).item())
         print("[CC] h cc add norm --> final", torch.min(h_cc).item(), torch.max(h_cc).item())
         print()

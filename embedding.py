@@ -14,6 +14,7 @@ from rdkit.Chem import MolFromPDBFile, AllChem, GetPeriodicTable, rdDistGeom
 from rdkit.Chem.rdPartialCharges import ComputeGasteigerCharges
 from scipy import spatial
 from scipy.special import softmax
+from torch import nn
 
 from geometry_utils import rigid_transform_Kabsch_3D, rigid_transform_Kabsch_3D_torch
 from logger import log
@@ -113,6 +114,26 @@ class AtomEncoder(torch.nn.Module):
             x_embedding += self.linear(x[:, self.num_categorical_features:])
         if torch.isnan(x_embedding).any():
             log('nan')
+        return x_embedding
+
+class AtomEncoderTorsionalDiffusion(torch.nn.Module):
+    def __init__(self, emb_dim, feature_dim):
+        super(AtomEncoderTorsionalDiffusion, self).__init__()
+        self.node_embedding = nn.Sequential(
+            nn.Linear(feature_dim, emb_dim),
+            nn.LeakyReLU(negative_slope=1e-2),# nn.ReLU(),
+            nn.Linear(emb_dim, emb_dim)
+        )
+        self.apply(self._init_weights)
+        
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.xavier_normal_(module.weight, gain = 1.)
+            if module.bias is not None:
+                module.bias.data.zero_()
+
+    def forward(self, x):
+        x_embedding = self.node_embedding(x)
         return x_embedding
 
 def lig_atom_featurizer(mol):

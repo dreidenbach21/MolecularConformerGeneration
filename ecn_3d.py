@@ -8,7 +8,7 @@ import torch
 from torch import nn
 from dgl import function as fn
 
-from embedding import AtomEncoder, A_feature_dims
+from embedding import AtomEncoder, A_feature_dims, AtomEncoderTorsionalDiffusion
 from logger import log
 from model_utils import *
 from ecn_layers import *
@@ -20,8 +20,9 @@ from ecn_3d_layers import *
 class ECN3D(nn.Module):
     def __init__(self, n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
                  use_edge_features_in_gmn, use_mean_node_features, atom_emb_dim, latent_dim,coord_F_dim,
-                 dropout, nonlin, leakyrelu_neg_slope, random_vec_dim=0, random_vec_std=1, use_scalar_features=True,
-                 num_A_feats=None, save_trajectories=False, weight_sharing = True, conditional_mask=False, **kwargs):
+                 dropout, nonlin, leakyrelu_neg_slope, feature_dims = None, random_vec_dim=0, random_vec_std=1, use_scalar_features=True,
+                 num_A_feats=None, save_trajectories=False, weight_sharing = True, conditional_mask=False, 
+                 edge_feats_dim = 15, use_bond_in_edge_feats = True, **kwargs):
         super(ECN3D, self).__init__()
         self.debug = debug
         self.cross_msgs = cross_msgs
@@ -46,21 +47,30 @@ class ECN3D(nn.Module):
         # self.evolve_only = evolve_only
         self.weight_sharing = weight_sharing
         self.conditional_mask = conditional_mask
-
-        self.atom_embedder = AtomEncoder(emb_dim=atom_emb_dim - self.random_vec_dim,
-                                             feature_dims=A_feature_dims, use_scalar_feat=use_scalar_features,
-                                             n_feats_to_use=num_A_feats)
+        # import ipdb; ipdb.set_trace()
+        # if feature_dims == None:
+        #     feature_dims = A_feature_dims
+        # self.atom_embedder = AtomEncoder(emb_dim=atom_emb_dim - self.random_vec_dim,
+                                            #  feature_dims=feature_dims, use_scalar_feat=use_scalar_features,
+                                            #  n_feats_to_use=num_A_feats)
+        # ! Switched from EquiBind Encoding to MLP of Torsional Diffusion
+        self.atom_embedder = AtomEncoderTorsionalDiffusion(emb_dim=atom_emb_dim - self.random_vec_dim, feature_dim = 45)
 
         input_node_feats_dim = atom_emb_dim #64
         if self.use_mean_node_features:
             input_node_feats_dim += 5  ### Additional features from mu_r_norm
         
         # Create First Layer
+        fg_edge_feats_dim = edge_feats_dim
+        if use_bond_in_edge_feats:
+            fg_edge_feats_dim += 5
+        cg_edge_feats_dim = edge_feats_dim
         self.fine_grain_layers = nn.ModuleList()
         self.fine_grain_layers.append(
             Fine_Grain_Layer(orig_invar_feats_dim_h=input_node_feats_dim,
                         invar_feats_dim_h=input_node_feats_dim,
                         out_feats_dim_h=latent_dim,
+                        edge_feats_dim = fg_edge_feats_dim,
                         nonlin=nonlin,
                         cross_msgs=self.cross_msgs,
                         leakyrelu_neg_slope=leakyrelu_neg_slope,
@@ -74,6 +84,7 @@ class ECN3D(nn.Module):
             interm_lay = Fine_Grain_Layer(orig_invar_feats_dim_h=input_node_feats_dim,
                                      invar_feats_dim_h=latent_dim,
                                      out_feats_dim_h=latent_dim,
+                                     edge_feats_dim = fg_edge_feats_dim,
                                      cross_msgs=self.cross_msgs,
                                      nonlin=nonlin,
                                      leakyrelu_neg_slope=leakyrelu_neg_slope,
@@ -91,6 +102,7 @@ class ECN3D(nn.Module):
                     Fine_Grain_Layer(orig_invar_feats_dim_h=input_node_feats_dim,
                                 invar_feats_dim_h=latent_dim,
                                 out_feats_dim_h=latent_dim,
+                                edge_feats_dim = fg_edge_feats_dim,
                                 cross_msgs=self.cross_msgs,
                                 nonlin=nonlin,
                                 leakyrelu_neg_slope=leakyrelu_neg_slope,
@@ -105,6 +117,7 @@ class ECN3D(nn.Module):
         self.pooling_layers.append(
             Pooling_3D_Layer(invar_feats_dim_h=latent_dim,
                         out_feats_dim_h=latent_dim,
+                        edge_feats_dim = cg_edge_feats_dim,
                         nonlin=nonlin,
                         cross_msgs=self.cross_msgs,
                         leakyrelu_neg_slope=leakyrelu_neg_slope,
@@ -116,6 +129,7 @@ class ECN3D(nn.Module):
         if shared_layers:
             interm_lay = Pooling_3D_Layer(invar_feats_dim_h=latent_dim,
                                      out_feats_dim_h=latent_dim,
+                                     edge_feats_dim = cg_edge_feats_dim,
                                      cross_msgs=self.cross_msgs,
                                      nonlin=nonlin,
                                      leakyrelu_neg_slope=leakyrelu_neg_slope,
@@ -132,6 +146,7 @@ class ECN3D(nn.Module):
                 self.pooling_layers.append(
                     Pooling_3D_Layer(invar_feats_dim_h=latent_dim,
                                 out_feats_dim_h=latent_dim,
+                                edge_feats_dim = cg_edge_feats_dim,
                                 cross_msgs=self.cross_msgs,
                                 nonlin=nonlin,
                                 leakyrelu_neg_slope=leakyrelu_neg_slope,
@@ -195,6 +210,9 @@ class ECN3D(nn.Module):
         
         coords_A = A_graph.ndata['x']
         coords_B = B_graph.ndata['x']
+        # import ipdb; ipdb.set_trace()
+        # print("EMB CHECK", next(self.atom_embedder.parameters()).is_cuda)
+        # print(A_graph.ndata['feat'].device)
         h_feats_A = self.atom_embedder(A_graph.ndata['feat'])
         h_feats_B = self.atom_embedder(B_graph.ndata['feat'])
 

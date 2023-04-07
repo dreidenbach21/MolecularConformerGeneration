@@ -19,8 +19,7 @@ class Fine_Grain_Layer(nn.Module):
             orig_invar_feats_dim_h, #orig_h_feats_dim,
             invar_feats_dim_h, #h_feats_dim,  # in dim of h
             out_feats_dim_h, #out_feats_dim,  # out dim of h
-            A_input_edge_feats_dim, #lig_input_edge_feats_dim,
-            B_input_edge_feats_dim, #rec_input_edge_feats_dim,
+            edge_feats_dim,
             nonlin,
             cross_msgs, #boolean
             layer_norm,
@@ -48,6 +47,8 @@ class Fine_Grain_Layer(nn.Module):
             geom_reg_steps= 1,
             geometry_reg_step_size=0.1,
             weight_sharing=True,
+            A_input_edge_feats_dim = None, #lig_input_edge_feats_dim,
+            B_input_edge_feats_dim = None, #rec_input_edge_feats_dim,
     ):
 
         super(Fine_Grain_Layer, self).__init__()
@@ -80,7 +81,7 @@ class Fine_Grain_Layer(nn.Module):
         self.weight_sharing = weight_sharing
 
         # EDGES
-        A_edge_mlp_input_dim = (invar_feats_dim_h * 2) + A_input_edge_feats_dim
+        A_edge_mlp_input_dim = (invar_feats_dim_h * 2) + edge_feats_dim
         if self.use_dist_in_layers: #and self.A_evolve: #TRUE and TRUE
             A_edge_mlp_input_dim += len(self.all_sigmas_dist)
 
@@ -96,7 +97,7 @@ class Fine_Grain_Layer(nn.Module):
         if self.weight_sharing:
             self.B_edge_mlp = self.A_edge_mlp
         else:
-            B_edge_mlp_input_dim = (invar_feats_dim_h * 2) + B_input_edge_feats_dim
+            B_edge_mlp_input_dim = (invar_feats_dim_h * 2) + edge_feats_dim
             if self.use_dist_in_layers: # and self.B_evolve:
                 B_edge_mlp_input_dim += len(self.all_sigmas_dist)
             # if self.standard_norm_order:
