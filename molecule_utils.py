@@ -92,6 +92,8 @@ def autoregressive_bfs(ids, bmap, a=1.0, b=1.1):
     max_score = 0
     for k, val in bmap.items():
         sc = len(ids[k])*a + len(val)*b
+        penalty = 0 if len(ids[k]) > 1 else a
+        sc -= penalty
         scores[k] = sc
         max_score = max(max_score, sc)
         if max_score == sc:
@@ -110,6 +112,56 @@ def autoregressive_bfs(ids, bmap, a=1.0, b=1.1):
         kids = [x for _, x in sorted(zip([scores[y] for y in kids], kids), key=lambda pair: pair[0], reverse = True)]
         queue.extend(kids)
     return order
+
+def autoregressive_bfs_with_reference(ids, bmap, bond_break, a=1.0, b=1.1):
+    print(ids)
+    print(bmap)
+    print(bond_break)
+    if len(ids) == 1:
+        return [0], [-1]
+    scores = {}
+    start = -1
+    max_score = 0
+    for k, val in bmap.items():
+        sc = len(ids[k])*a + len(val)*b
+        penalty = 0 if len(ids[k]) > 1 else a
+        sc -= penalty
+        scores[k] = sc
+        max_score = max(max_score, sc)
+        if max_score == sc:
+            start = k
+    order = []
+    queue = [(start, -1)]
+    reference = []
+    seen = set([start])
+    while len(queue) > 0:
+        cur = queue.pop(0)
+        reference.append(cur[1])
+        cur = cur[0]
+        order.append(cur)
+        kids = [x for x in bmap[cur] if x not in seen]
+        if len(kids) == 0:
+            continue
+        for k in kids:
+            seen.add(k)
+        kids_connect = []
+#     Here we check the forward and reverse direction to ensure the reference comes from the 
+        for _, x in sorted(zip([scores[y] for y in kids], kids), key=lambda pair: pair[0], reverse = True):
+            for kid in ids[x]:
+                if kid in bond_break.keys():
+                    atom_connect = list(set(bond_break[kid]).intersection(ids[cur]))
+                    if len(atom_connect) == 0:
+                        continue
+                    print("ac", atom_connect, "kid -->", bond_break[kid], kid,ids[x], "cur -->", ids[cur])
+                    assert(len(atom_connect) == 1)
+                    atom_connect = atom_connect[0]
+                    break
+                atom_connect = -1
+            kids_connect.append((x, atom_connect))
+        kids = kids_connect
+        queue.extend(kids)
+    assert(all([ v > -1 for v in reference[1:] ]))
+    return order, reference
 
 def mol2graph(mol, name = "test", radius=4, max_neighbors=None, use_rdkit_coords = False, seed = 0):
     conf = mol.GetConformer()
@@ -204,12 +256,13 @@ def get_torsion_angles(mol):
         )
     return torsions_list
 
-def coarsen_molecule(m):
+def coarsen_molecule(m, use_diffusion = False):
     m = Chem.AddHs(m) #the GEOM dataset molecules have H's
-    torsions = get_torsions_geo([m])
-    print("torsion angles", torsions)
-    torsions = get_torsion_angles(m)
-    print("other method", torsions)
+    if not use_diffusion:
+        torsions = get_torsions_geo([m])
+    else:
+        torsions = get_torsion_angles(m)
+    print("Torsion Angles", torsions)
     if len(torsions) > 0:
         bond_break = [(b,c) for a,b,c,d in torsions]
         adj = Chem.rdmolops.GetAdjacencyMatrix(m)
@@ -306,7 +359,7 @@ def create_pooling_graph(dgl_graph, frag_ids, latent_dim = 64, use_mean_node_fea
     return graph
         
 
-def conditional_coarsen_3d(dgl_graph, frag_ids, cg_map, radius=4, max_neighbors=None, latent_dim_D = 64, latent_dim_F = 32,  use_mean_node_features = True):
+def conditional_coarsen_3d(dgl_graph, frag_ids, cg_map, bond_break = None, radius=4, max_neighbors=None, latent_dim_D = 64, latent_dim_F = 32,  use_mean_node_features = True):
     num_nodes = len(frag_ids)
     coords = []
     # if use_mean_node_features:
@@ -321,10 +374,21 @@ def conditional_coarsen_3d(dgl_graph, frag_ids, cg_map, radius=4, max_neighbors=
         Mmap[bead, 0] = len(list(atom_ids))
         # TODO can scale by MW weighted_average = (A@W)/W.sum()
 #         print(subg, coords[0].shape, coords)
-    bfs_order = autoregressive_bfs(frag_ids, cg_map)
+    # bfs_order = autoregressive_bfs(frag_ids, cg_map)
+    bfs_order, ref_order = autoregressive_bfs_with_reference(frag_ids, cg_map, bond_break)
+    print(bfs_order)
+    print(ref_order)
     bfs = np.zeros((num_nodes,1))
+    ref = np.zeros((num_nodes,1))
     for order_idx, bead in enumerate(bfs_order): # step 0 --> N
         bfs[bead, 0] = order_idx
+    for order_idx, atom_reference in enumerate(ref_order): # step 0 --> N
+        ref[order_idx, 0] = atom_reference
+    # Use the below if we need the reference to be in bead order not BFS order
+    # for order_idx, info in enumerate(zip(bfs_order,ref_order)):
+    #     bead, atom_reference = info # step 0 --> N
+    #     bfs[bead, 0] = order_idx
+    #     ref[bead, 0] = atom_reference
 
     coords = np.asarray(coords)
     distance = spa.distance.cdist(coords, coords)
@@ -396,6 +460,7 @@ def conditional_coarsen_3d(dgl_graph, frag_ids, cg_map, radius=4, max_neighbors=
     # graph.ndata['M'] = torch.from_numpy(np.array(M).astype(np.float32))
     graph.ndata['cg_to_fg'] = torch.from_numpy(np.array(Mmap).astype(np.float32))
     graph.ndata['bfs'] = torch.from_numpy(np.array(bfs).astype(np.float32))
+    graph.ndata['bfs_reference_point'] = torch.from_numpy(np.array(ref).astype(np.float32))
     return graph
 
 def get_coords(rd_mol):

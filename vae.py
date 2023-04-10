@@ -5,6 +5,7 @@ from decoder_utils import IEGMN_Bidirectional
 from collections import defaultdict
 import numpy as np
 import copy
+from torch import nn
 import ipdb
 from neko_fixed_attention import neko_MultiheadAttention
 
@@ -30,7 +31,7 @@ class VAE(nn.Module):
 
     def flip_teacher_forcing(self):
         self.decoder.teacher_forcing = not self.decoder.teacher_forcing
-        
+
     def forward(self, frag_ids, A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch):
         enc_out = self.encoder(A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch)
         results, geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg = enc_out
@@ -51,7 +52,7 @@ class VAE(nn.Module):
         print("[Loss Func] KL V", kl_v)
         print("kl h", kl_h)
         print("KL prior reg kl", kl_v_reg)
-        if step < 50:
+        if step < 5:#0:
             kl_loss = torch.tensor(0)
         else:
             kl_loss = self.kl_v_beta*kl_v + self.kl_h_beta*kl_h + self.kl_reg_beta*kl_v_reg
@@ -186,12 +187,14 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.ecn = ecn
         
-        self.posterior_mean_V = Vector_MLP(2*F, 2*F, 2*F, F, use_batchnorm = False)
+        self.posterior_mean_V = VN_MLP(2*F, F, F, F, use_batchnorm = False) 
+        # self.posterior_mean_V = Vector_MLP(2*F, 2*F, 2*F, F, use_batchnorm = False) 
         self.posterior_mean_h = Scalar_MLP(2*D, 2*D, D, use_batchnorm = False)
         self.posterior_logvar_V = Scalar_MLP(2*F*3, 2*F*3, F, use_batchnorm = False)# need to flatten to get equivariant noise N x F x 1
         self.posterior_logvar_h = Scalar_MLP(2*D, 2*D, D, use_batchnorm = False)
 
-        self.prior_mean_V = Vector_MLP(F,F,F,F, use_batchnorm = False)
+        self.prior_mean_V = VN_MLP(F,F,F,F, use_batchnorm = False)
+        # self.prior_mean_V = Vector_MLP(F,F,F,F, use_batchnorm = False)
         self.prior_mean_h = Scalar_MLP(D, D, D, use_batchnorm = False)
         self.prior_logvar_V = Scalar_MLP(F*3, F*3, F, use_batchnorm = False)
         self.prior_logvar_h = Scalar_MLP(D, D, D, use_batchnorm = False)
@@ -210,8 +213,9 @@ class Encoder(nn.Module):
         prior_logvar_V = self.prior_logvar_V(v_B.reshape((v_B.shape[0], -1))).unsqueeze(2)
         prior_logvar_h = self.prior_logvar_h(h_B)
 
-        # TODO: try clamping the prior logv to 0
+        # TODO: try clamping the prior logv to 0 or min clamp the posterior
         prior_logvar_V = torch.clamp(prior_logvar_V, max = 0)
+        posterior_input_V = torch.clamp(posterior_input_V, min = -0.01)
 
         posterior_mean_V = self.posterior_mean_V(posterior_input_V)
         # print("[Encoder] pre BN posterior mean V", torch.min(posterior_mean_V).item(), torch.max(posterior_mean_V).item()) #, torch.sum(posterior_mean_V, dim = 1))
@@ -310,11 +314,13 @@ class Decoder(nn.Module):
         else:
             assert(1 == 0)
         self.device = device
-        # TODO: try Vector_MLP_Flip for traditional MLP formulation not 3DLinkers
-        self.feed_forward_V = Vector_MLP(F, 2*F, 2*F, F, leaky = False, use_batchnorm = False)
+        # TODO: try Vector_MLP repalce with VN_MLP for traditional MLP formulation not 3DLinkers
+        # self.feed_forward_V = Vector_MLP(F, 2*F, 2*F, F, leaky = False, use_batchnorm = False)
+        self.feed_forward_V = nn.Sequential(VNLinear(F, 2*F), VN_MLP(2*F, F, F, F, leaky = False, use_batchnorm = False))
         self.feed_forward_h = Scalar_MLP(D, 2*D, D)
 
-        self.feed_forward_V_3 = Vector_MLP(3, F, F, 3, leaky = False, use_batchnorm = False)
+        # self.feed_forward_V_3 = Vector_MLP(3, F, F, 3, leaky = False, use_batchnorm = False)
+        self.feed_forward_V_3 = nn.Sequential(VNLinear(3, F), VN_MLP(F, 3, 3, 3, leaky = False, use_batchnorm = False))
         self.feed_forward_h_3 = Scalar_MLP(D, 2*D, D)
         self.teacher_forcing = teacher_forcing
     
@@ -498,6 +504,9 @@ class Decoder(nn.Module):
         final_molecule = rdkit_mol_graph
         frag_ids = self.sort_ids(cg_frag_ids, bfs_order)
         frag_batch = defaultdict(list) # keys will be time steps
+        # TODO: build similar object for reference atoms as they are already in BFS order
+        # TODO: does this work or do we need to sort them like hte BFS
+        # TODO: print out what the references look like adn the frag ids after sorting to make sure they line up and look realistic
         max_nodes = max(cg_mol_graph.batch_num_nodes()).item()
         for t in range(max_nodes):
             for idx, frag in enumerate(frag_ids): # iterate over moelcules
@@ -510,9 +519,7 @@ class Decoder(nn.Module):
         current_molecule_ids = None
         current_molecule = None
         geo_current = None
-        # current_count = torch.tensor([0]*len(progress))
         returns = []
-        # TODO implement teacher forcing
         for t in range(max_nodes):
             # ipdb.set_trace()
             id_batch = frag_batch[t]
@@ -534,10 +541,10 @@ class Decoder(nn.Module):
             # print(f'{t} A MSE = {torch.mean(torch.sum(ref_coords_A - coords_A, dim = 1)**2)}')
             # if ref_coords_B is not None:
             if torch.gt(coords_A, 1000).any() or  torch.lt(coords_A, -1000).any() or (coords_B is not None and torch.gt(coords_B, 1000).any()) or (coords_B is not None and torch.lt(coords_B, -1000).any()):
-                ipdb.set_trace()
+                # ipdb.set_trace()
                 print("Caught Explosion in Decode step")
-                X_cc, H_cc = self.channel_selection(cg_mol_graph, rdkit_mol_graph, cg_frag_ids)
-                coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory = self.autoregressive_step(latent, current_molecule, t, geo_latent, geo_current)
+                # X_cc, H_cc = self.channel_selection(cg_mol_graph, rdkit_mol_graph, cg_frag_ids)
+                # coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory = self.autoregressive_step(latent, current_molecule, t, geo_latent, geo_current)
 
                 # print(f'{t} B MSE = {torch.mean(torch.sum(ref_coords_B - coords_B, dim = 1)**2)}')
             self.update_molecule(final_molecule, id_batch, coords_A, h_feats_A, latent)

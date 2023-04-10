@@ -464,21 +464,23 @@ class Coarse_Grain_3DLayer(nn.Module):
             self.B_rbf_1 = nn.Linear(self.num_rbf, self.D) #nn.Parameter(glorot_init([self.num_rbf, D]))
             self.B_rbf_2 = nn.Linear(self.num_rbf, self.F) #nn.Parameter(glorot_init([self.num_rbf, F]))
             self.B_rbf_3 = nn.Linear(self.num_rbf, self.F) #nn.Parameter(glorot_init([self.num_rbf, F]))
-
-        self.A_vn_mlp_1 = Vector_Relu(self.F,self.F)
-        self.A_vn_mlp_2 = Vector_Relu(self.F,self.F)
-        self.A_vn_mlp_3 = Vector_Relu(self.F,self.F)
-        self.A_vn_mlp_4 = Vector_MLP(2*self.F,2*self.F, 2*self.F, self.F)
+# ! change types of VN architecture
+        self.A_vn_mlp_1 = VNLinear(self.F,self.F)
+        self.A_vn_mlp_2 = VNLinear(self.F,self.F)
+        self.A_vn_mlp_3 = VNLinear(self.F,self.F)
+        # self.A_vn_mlp_4 = Vector_MLP(2*self.F,2*self.F, 2*self.F, self.F)
+        self.A_vn_mlp_4 = VN_MLP(2*self.F, self.F, self.F, self.F)
         if self.weight_sharing:
             self.B_vn_mlp_1 = self.A_vn_mlp_1
             self.B_vn_mlp_2 = self.A_vn_mlp_2
             self.B_vn_mlp_3 = self.A_vn_mlp_3
             self.B_vn_mlp_4 = self.A_vn_mlp_4
         else:
-            self.B_vn_mlp_1 = Vector_Relu(self.F,self.F)
-            self.B_vn_mlp_2 = Vector_Relu(self.F,self.F)
-            self.B_vn_mlp_3 = Vector_Relu(self.F,self.F)
-            self.B_vn_mlp_4 = Vector_MLP(2*self.F,2*self.F, 2*self.F, self.F)
+            self.B_vn_mlp_1 = VNLinear(self.F,self.F)
+            self.B_vn_mlp_2 = VNLinear(self.F,self.F)
+            self.B_vn_mlp_3 = VNLinear(self.F,self.F)
+            # self.B_vn_mlp_4 = Vector_MLP(2*self.F,2*self.F, 2*self.F, self.F)
+            self.B_vn_mlp_4 = VN_MLP(2*self.F, self.F, self.F, self.F)
 
         self.A_phi_1 = Scalar_Linear(self.F + self.D, self.D)
         self.A_phi_2 = Scalar_Linear(self.F + self.D, self.F)
@@ -576,24 +578,6 @@ class Coarse_Grain_3DLayer(nn.Module):
             else:
                 torch.nn.init.zeros_(p)
         
-
-    # def generate_mixed_features_A(self, nodes):
-    #     h = nodes.data['feat_pool']
-    #     v = nodes.data['v_now']
-    #     v_norm = nodes.data['v_norm']
-
-    #     combo = torch.cat([h, v_norm], dim =1)
-    #     hp = self.scalar_neuron_h_A(combo)
-    #     hpp_0 = self.scalar_neuron_v_0_A(h) # should this be combo
-    #     hpp_1 = self.scalar_neuron_v_1_A(h) # should this be combo
-    #     vp = self.Vector_Relu_A(v)
-
-    #     return {
-    #         "hp":hp,
-    #         "hpp_0": hpp_0,
-    #         "hpp_1": hpp_1,
-    #         "vp": vp
-    #     }
     def generate_mixed_features_A(self, nodes):
         h = nodes.data['feat_pool']
         v = nodes.data['v_now']

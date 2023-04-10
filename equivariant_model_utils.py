@@ -105,8 +105,8 @@ class Vector_Relu(nn.Module):
         inner_product = torch.einsum('nic,  nic->nc', Q, K)
         inner_product = torch.unsqueeze(inner_product * (inner_product < 0), dim=1)
         k_norm = torch.linalg.norm(K, dim=1)
-        k_norm = torch.unsqueeze(k_norm, dim=1) + self.eps
-        output = Q - inner_product * K / torch.square(k_norm)
+        k_norm = torch.unsqueeze(k_norm, dim=1) # + self.eps # NaN issue here
+        output = Q - inner_product * K / (torch.square(k_norm) + self.eps)
         output = torch.transpose(output, -1, -2)
         if self.leaky:
             input = torch.transpose(input, -1, -2)
@@ -251,8 +251,8 @@ class VNLeakyReLU(nn.Module):
         self.leaky = leaky
         self.eps = 1e-7
         self.alpha = alpha
-        self.apply(self._init_weights)
         self.W_out = W_out
+        self.apply(self._init_weights)
         
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -260,15 +260,16 @@ class VNLeakyReLU(nn.Module):
             if module.bias is not None:
                 module.bias.data.zero_()
     
-    def forward(self, input):
+    def forward(self, x):
         '''
         x: point features of shape [B, N_feat, 3, N_samples, ...]
         '''
+        # import ipdb; ipdb.set_trace()
         d = self.map_to_dir(x.transpose(1,-1)).transpose(1,-1)
         dotprod = (x*d).sum(2, keepdim=True)
         mask = (dotprod >= 0).float()
         d_norm_sq = (d*d).sum(2, keepdim=True)
-        xout = (mask*x + (1-mask)*(x-(dotprod/(d_norm_sq+EPS))*d))
+        xout = (mask*x + (1-mask)*(x-(dotprod/(d_norm_sq+self.eps))*d))
         if self.leaky:
             x_out = self.alpha * x + (1-self.alpha) * xout
         else:
@@ -276,10 +277,10 @@ class VNLeakyReLU(nn.Module):
         return x_out
 
 # class VNLinearAndLeakyReLU(nn.Module):
-class Vector_MLP_Flip(nn.Module):
+class VN_MLP(nn.Module):
     def __init__(self, in_channels, out_channels, W_in, W_out, leaky=True, use_batchnorm=True, alpha=0.2):
         # super(VNLinearAndLeakyReLU, self).__init__()
-        super(Vector_MLP_Flip, self).__init__()
+        super(VN_MLP, self).__init__()
         assert(out_channels == W_in)
         self.use_batchnorm = use_batchnorm
         self.alpha = alpha
@@ -297,6 +298,7 @@ class Vector_MLP_Flip(nn.Module):
         x: point features of shape [B, N_feat, 3, N_samples, ...]
         '''
         # Conv
+        # import ipdb; ipdb.set_trace()
         x = self.linear(x)
         # InstanceNorm
         if self.use_batchnorm:

@@ -80,7 +80,7 @@ print("Loading QM9...")
 # with open(geom_path + "qm9_safe_v2.pickle", 'rb') as f:
 #     qm9 = pickle.load(f)
 batch_size = 25
-train_limit = 100
+train_limit = 1000
 train_loader, train_data = load_torsional_data(batch_size = batch_size, mode= 'train', limit_mols = train_limit)
 val_limit = 25
 val_loader, val_data = load_torsional_data(batch_size = batch_size, mode= 'val', limit_mols = val_limit)
@@ -128,9 +128,9 @@ if __name__ =="__main__":
   #         self.step_schedulers() --> self.lr_scheduler.step()
   # self.optim.zero_grad()
   # self.optim_steps += 1
-  # torch.autograd.set_detect_anomaly(True)
-  train_loss_log_name = "torsional_diffusion_test3" + "_train"
-  val_loss_log_name = "torsional_diffusion_test3" + "_val"
+  torch.autograd.set_detect_anomaly(True)
+  train_loss_log_name = "torsional_diffusion_test_geomol_1000_minpostclamp" + "_train"
+  val_loss_log_name = "torsional_diffusion_test_geomol2_1000_minpostclamp" + "_val"
   train_loss_log_total, val_loss_log_total = [], []
   for epoch in range(10000):
     print("\n\n\n\n\nEpoch", epoch)
@@ -183,7 +183,7 @@ if __name__ =="__main__":
     
     print("\n\n\n\n\n Validation")
     with torch.no_grad():
-      # model.flip_teacher_forcing()
+      model.flip_teacher_forcing()
       for A_batch, B_batch in val_loader:
         A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
         B_graph, geo_B, Bp, B_cg, geo_B_cg = B_batch
@@ -197,7 +197,7 @@ if __name__ =="__main__":
         val_loss_log.append(losses)
         print(f"Val LOSS = {loss}")
       val_loss_log_total.append(val_loss_log)
-      # model.flip_teacher_forcing()
+      model.flip_teacher_forcing()
       with open(f'./{val_loss_log_name}.pkl', 'wb') as f:
         pickle.dump(val_loss_log_total, f)
 

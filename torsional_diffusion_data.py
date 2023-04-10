@@ -260,7 +260,7 @@ class ConformerDataset(DGLDataset):
     def __init__(self, root, split_path, mode, types, dataset, num_workers=1, limit_molecules=None,
                  cache_path=None, pickle_dir=None, boltzmann_resampler=None, raw_dir=None, save_dir=None,
                  force_reload=False, verbose=False, transform=None, name = "TorsionalDiffusion",
-                 invariant_latent_dim = 64, equivariant_latent_dim = 32):
+                 invariant_latent_dim = 64, equivariant_latent_dim = 32, use_diffusion = False):
         # part of the featurisation and filtering code taken from GeoMol https://github.com/PattanaikL/GeoMol
 #         super(ConformerDataset, self).__init__(name, transform)
         self.D = invariant_latent_dim
@@ -271,6 +271,7 @@ class ConformerDataset(DGLDataset):
         self.dataset = dataset
         self.boltzmann_resampler = boltzmann_resampler
         self.cache_path = cache_path
+        self.use_diffusion = use_diffusion
         print("Cache", cache_path)
         if cache_path: cache_path += "." + mode
         
@@ -401,9 +402,9 @@ class ConformerDataset(DGLDataset):
         if np.sum(edge_mask) < 0.5:
             self.failures['no_rotable_bonds'] += 1
             return False
-
-        A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol)
-        A_cg = conditional_coarsen_3d(data, A_frag_ids, A_cg_map, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
+        print("SMILE", smile)
+        A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion = self.use_diffusion)
+        A_cg = conditional_coarsen_3d(data, A_frag_ids, A_cg_map, A_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
         geometry_graph_A = get_geometry_graph(mol)
         Ap = create_pooling_graph(data, A_frag_ids)
         geometry_graph_A_cg = get_coarse_geometry_graph(A_cg, A_cg_map)
@@ -413,8 +414,8 @@ class ConformerDataset(DGLDataset):
         if not data_B:
             self.failures['featurize_mol_failed_B'] += 1
             return False
-        B_frags, B_frag_ids, B_adj, B_out, B_bond_break, B_cg_bonds, B_cg_map = coarsen_molecule(mol)
-        B_cg = conditional_coarsen_3d(data_B, B_frag_ids, B_cg_map, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
+        B_frags, B_frag_ids, B_adj, B_out, B_bond_break, B_cg_bonds, B_cg_map = coarsen_molecule(mol, use_diffusion = self.use_diffusion)
+        B_cg = conditional_coarsen_3d(data_B, B_frag_ids, B_cg_map, B_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
         geometry_graph_B = get_geometry_graph(mol)
         Bp = create_pooling_graph(data_B, B_frag_ids)
         geometry_graph_B_cg = get_coarse_geometry_graph(B_cg, B_cg_map)
@@ -528,12 +529,14 @@ def load_torsional_data(batch_size = 32, mode = 'train', data_dir='/home/dreiden
                  split_path='/home/dreidenbach/code/mcg/torsional-diffusion/data/QM9/split.npy',
                   std_pickles='/home/dreidenbach/code/mcg/torsional-diffusion/data/QM9/standardized_pickles'):
     types = qm9_types if dataset == 'qm9' else drugs_types
+    use_diffusion = False
     data = ConformerDataset(data_dir, split_path, mode, dataset=dataset,
                                    types=types, transform=None,
                                    num_workers=num_workers,
                                    limit_molecules=limit_mols, #args.limit_train_mols,
                                    cache_path=None, #args.cache,
                                    pickle_dir=std_pickles,
+                                   use_diffusion=use_diffusion,
                                    boltzmann_resampler=None)
     dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=num_workers,
                                             collate_fn = collate)
