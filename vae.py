@@ -20,7 +20,7 @@ class VAE(nn.Module):
         self.kl_h_beta = 0#1e-4
         self.kl_reg_beta = 1
         self.align_kabsch_weight = 20
-        self.ar_rmsd_weight = 1 #1
+        self.ar_rmsd_weight = 10 #1
         self.mse = nn.MSELoss()
         # self.mse_sum= nn.MSELoss(reduction='sum')
         self.device = device
@@ -47,12 +47,24 @@ class VAE(nn.Module):
         generated_molecule, rdkit_reference, dec_results, channel_selection_info = dec_out
         return generated_molecule, rdkit_reference, dec_results, channel_selection_info, (kl_v, kl_h, kl_v_reg), enc_out
     
-    def loss_function(self, generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, step = 0):
+    def distance_loss(self, generated_molecule, geometry_graphs):
+        geom_loss = []
+        for geometry_graph, generated_mol in zip(dgl.unbatch(geometry_graphs), dgl.unbatch(generated_molecule)):
+            src, dst = geometry_graph.edges()
+            src = src.long()
+            dst = dst.long()
+            generated_coords = generated_mol.ndata['x_cc']
+            d_squared = torch.sum((generated_coords[src] - generated_coords[dst]) ** 2, dim=1)
+            geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
+        print("[Distance Loss]", geom_loss)
+        return torch.mean(torch.tensor(geom_loss))
+
+    def loss_function(self, generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geometry_graph, step = 0):
         kl_v, kl_h, kl_v_reg = KL_terms
         print("[Loss Func] KL V", kl_v)
         print("kl h", kl_h)
         print("KL prior reg kl", kl_v_reg)
-        if step < 5:#0:
+        if step < 50:#0:
             kl_loss = torch.tensor(0)
         else:
             kl_loss = self.kl_v_beta*kl_v + self.kl_h_beta*kl_h + self.kl_reg_beta*kl_v_reg
@@ -64,14 +76,22 @@ class VAE(nn.Module):
         # cc_loss = self.lambda_cc*self.mse_sum(x_cc, x_true) #self.lambda_cc*torch.norm(x_cc-x_true, 2)**2
         x_cc_loss = (torch.norm(x_cc, 2) - torch.norm(x_true, 2))**2
         print("[Loss Func] X CC norm diff loss", x_cc_loss)
+        x_cc_loss = []
+        start = 0
+        for natoms in generated_molecule.batch_num_nodes():
+            x_cc_loss.append(self.rmsd(x_cc[start: start + natoms], x_true[start: start + natoms], align = True))
+            start += natoms
+        print("[Loss Func] aligned X CC loss", x_cc_loss)
+        x_cc_loss = sum(x_cc_loss)
+        # ipdb.set_trace()
         h_cc_loss = (torch.norm(h_cc, 2))**2
         print("[Loss Func] h CC norm loss", h_cc_loss)
         cc_loss = self.lambda_x_cc*x_cc_loss + self.lambda_h_cc*h_cc_loss
         print()
         # final_gen_coords = generated_molecule.ndata['x_cc']
         # true_coords = generated_molecule.ndata['x_true']
-        # rdkit_coords = rdkit_reference.ndata['x_ref'] #! align below is usually False. It is flipped for the debug run
-        ar_rmsd, final_align_rmsd = self.coordinate_loss(dec_results, generated_molecule, align =  True) #final_gen_coords, true_coords)
+        # rdkit_coords = rdkit_reference.ndata['x_ref']
+        ar_rmsd, final_align_rmsd, ar_dist_loss = self.coordinate_loss(dec_results, generated_molecule, align =  True)
         print()
         print("[Loss Func] Auto Regressive MSE", ar_rmsd)
         print("[Loss Func] Kabsch Align MSE", final_align_rmsd)
@@ -84,7 +104,7 @@ class VAE(nn.Module):
         # l2_v2 = torch.norm(results["posterior_mean_V"], 2)**2
         # l2_vp = torch.norm(results["prior_logvar_V"], 2)**2
         # l2_vp2 = torch.norm(results["prior_mean_V"], 2)**2
-        # TODO lo the std not logvar for norm
+
         l2_v = torch.norm(self.std(results["posterior_logvar_V"]), 2)**2
         l2_v2 = torch.norm(results["posterior_mean_V"], 2)**2
         l2_vp = torch.norm(self.std(results["prior_logvar_V"]), 2)**2
@@ -95,7 +115,14 @@ class VAE(nn.Module):
         # l2_loss = 0 #self.weight_decay_v*l2_v+self.weight_decay_h*l2_h
         # loss += l2_loss
         # ipdb.set_trace()
-        return loss, (ar_rmsd.cpu(), final_align_rmsd.cpu(), kl_loss.cpu(), x_cc_loss.cpu(), h_cc_loss.cpu(), l2_v.cpu(), l2_v2.cpu(), l2_vp.cpu(), l2_vp2.cpu(), l2_d.cpu())
+        rdkit_loss = sum([x.ndata['rdkit_loss'][0] for x in dgl.unbatch(rdkit_reference)])
+        distance_loss = self.distance_loss(generated_molecule, geometry_graph)
+        print("[Loss Func] distance", 80*distance_loss)
+        print("[Loss Func] ar distance", 20*ar_dist_loss)
+        loss += 80*distance_loss + 20*ar_dist_loss
+        
+        return loss, (ar_rmsd.cpu(), final_align_rmsd.cpu(), kl_loss.cpu(), x_cc_loss.cpu(), h_cc_loss.cpu(),
+                     l2_v.cpu(), l2_v2.cpu(), l2_vp.cpu(), l2_vp2.cpu(), l2_d.cpu(), rdkit_loss.cpu(), 80*distance_loss.cpu(), 20*ar_dist_loss.cpu())
 
     def std(self, input):
         return 1e-12 + torch.exp(input / 2)
@@ -104,6 +131,8 @@ class VAE(nn.Module):
         # Rot, trans = rigid_transform_Kabsch_3D_torch(input.T, target.T)
         # lig_coords = ((Rot @ (input).T).T + trans.squeeze())
         # Kabsch RMSD implementation below taken from EquiBind
+        # if source.shape[0] == 2: #! Kabsch seems to work better for RMSD still
+        #     return align_sets_of_two_points(target, source)
         lig_coords_pred = target
         lig_coords = source
         if source.shape[0] == 1:
@@ -111,7 +140,7 @@ class VAE(nn.Module):
         lig_coords_pred_mean = lig_coords_pred.mean(dim=0, keepdim=True)  # (1,3)
         lig_coords_mean = lig_coords.mean(dim=0, keepdim=True)  # (1,3)
 
-        A = (lig_coords_pred - lig_coords_pred_mean).transpose(0, 1) @ (lig_coords - lig_coords_mean)
+        A = (lig_coords_pred - lig_coords_pred_mean).transpose(0, 1) @ (lig_coords - lig_coords_mean)+1e-7 #added noise to help with gradients
 
         U, S, Vt = torch.linalg.svd(A)
 
@@ -143,20 +172,23 @@ class VAE(nn.Module):
 
     def coordinate_loss(self, dec_results, generated_molecule, align = False):# = None, final_gen_coords = None, true_coords = None):
         loss = 0
+        dist_losses = 0
         for step, info in enumerate(dec_results):
-            coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, _, id_batch, ref_coords_A, ref_coords_B, ref_coords_B_split, gen_input, ar_con_input = info
+            coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, _, id_batch, ref_coords_A, ref_coords_B, ref_coords_B_split, gen_input, ar_con_input, dist_loss = info
             # ipdb.set_trace()
             # print("ID")
             # num_molecules = len([x for x in id_batch if x is not None])
             num_molecule_chunks = [len(x) for x in id_batch if x is not None]
             # ga = self.mse_sum(coords_A, ref_coords_A)/num_molecules # Generative accuracy #TDO: was self.rmsd
             ga = self.ar_loss_step(coords_A, ref_coords_A, num_molecule_chunks, align, step)
-            print(coords_A.shape, ga)
-            if torch.gt(ga, 1000).any() or torch.isinf(ga).any() or torch.isnan(ga).any():
-                print("Chunks", num_molecule_chunks)
-                print("generative input", gen_input)
-                print("Bad Coordinate Check A", coords_A)
+            print("Generative", coords_A.shape, ga)
+            print("Dist Loss", dist_loss, "\n")
+            # if torch.gt(ga, 1000).any() or torch.isinf(ga).any() or torch.isnan(ga).any():
+            #     print("Chunks", num_molecule_chunks)
+            #     print("generative input", gen_input)
+            #     print("Bad Coordinate Check A", coords_A)
             loss += ga
+            dist_losses += dist_loss
             if coords_B is None:
                 assert(step == 0)
                 print()
@@ -164,22 +196,22 @@ class VAE(nn.Module):
             # arc = self.mse_sum(coords_B, ref_coords_B)/num_molecules # AR consistency
             num_molecule_chunks = [x.shape[0] for x in ref_coords_B_split]
             arc = self.ar_loss_step(coords_B, ref_coords_B, num_molecule_chunks, align)
-            print(coords_B.shape, arc)
+            print("AR Consistency", coords_B.shape, arc)
             if torch.gt(arc, 1000).any() or torch.isinf(arc).any() or torch.isnan(arc).any():
                 print("Chunks", num_molecule_chunks)
                 print("conditional input", ar_con_input)
                 print("Bad Coordinate Check B", coords_B)
             print()
             loss += arc
-        molecules = dgl.unbatch(generated_molecule)
-        align_loss = [self.rmsd(m.ndata['x_cc'],m.ndata['x_true'], align = True) for m in molecules]
+        # molecules = dgl.unbatch(generated_molecule)
+        align_loss = [self.rmsd(m.ndata['x_cc'],m.ndata['x_true'], align = True) for m in dgl.unbatch(generated_molecule)]
         # for m in molecules:
         #     print('LOSS kabsch RMSD between generated ligand and true ligand is ', np.sqrt(np.sum((m.ndata['x_cc'].cpu().detach().numpy() - self.align(m.ndata['x_true'], m.ndata['x_cc']).cpu().detach().numpy()) ** 2, axis=1).mean()).item())
         #     print('LOSS-2 kabsch RMSD between generated ligand and true ligand is ', np.sqrt(self.mse(m.ndata['x_cc'], self.align(m.ndata['x_true'], m.ndata['x_cc'])).cpu().detach().numpy()).item())
         #     print('LOSS-3 kabsch RMSD between generated ligand and true ligand is ', np.sqrt(self.mse_loss(m.ndata['x_cc'], m.ndata['x_true'], align=True).cpu().detach().numpy()).item())
         print("Align MSE Loss", align_loss)
         align_loss = sum(align_loss)
-        return loss, align_loss #self.rmsd(final_gen_coords, true_coords, align = True)
+        return loss, align_loss, dist_losses
             
 
 class Encoder(nn.Module):
@@ -205,6 +237,9 @@ class Encoder(nn.Module):
         # ipdb.set_trace()
         print("[Encoder] ecn output V A", torch.min(v_A).item(), torch.max(v_A).item())
         print("[Encoder] ecn output V B", torch.min(v_B).item(), torch.max(v_B).item())
+        if torch.isnan(torch.max(v_A)): #TODO How come we get NaN issue stemming from here
+            import ipdb; ipdb.set_trace()
+            (v_A, h_A), (v_B, h_B), geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg = self.ecn(A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch)
         posterior_input_V = torch.cat((v_A, v_B), dim = 1) # N x 2F x 3
         posterior_input_h = torch.cat((h_A, h_B), dim = 1) # N x 2D
 
@@ -215,7 +250,6 @@ class Encoder(nn.Module):
 
         # TODO: try clamping the prior logv to 0 or min clamp the posterior
         prior_logvar_V = torch.clamp(prior_logvar_V, max = 0)
-        posterior_input_V = torch.clamp(posterior_input_V, min = -0.01)
 
         posterior_mean_V = self.posterior_mean_V(posterior_input_V)
         # print("[Encoder] pre BN posterior mean V", torch.min(posterior_mean_V).item(), torch.max(posterior_mean_V).item()) #, torch.sum(posterior_mean_V, dim = 1))
@@ -300,6 +334,7 @@ class Decoder(nn.Module):
         self.iegmn = iegmn
         self.atom_embedder = atom_embedder # taken from the FG encoder
         self.h_channel_selection = Scalar_MLP(D, 2*D, D)
+        self.mse = nn.MSELoss()
         # norm = "ln"
         if norm == "bn":
             self.eq_norm = VNBatchNorm(F)
@@ -487,6 +522,70 @@ class Decoder(nn.Module):
             final_molecule.ndata['x_cc'][updated_ids, :] = coords_A[cids, :]
             final_molecule.ndata['feat_cc'][updated_ids, :] = h_feats_A[cids, :]
 
+    def add_reference(self, ids, refs, progress):
+        batch_idx = 0
+        for atom_ids, ref_list in zip(ids, refs):
+            for idx, bead in enumerate(atom_ids):
+                # print(idx, bead)
+                if len(bead) == 1:
+                    print("\n start", atom_ids)
+                    bead.add(int(ref_list[idx].item()))
+                    print("update with reference", atom_ids)
+                    progress[batch_idx] += 1
+            batch_idx += 1
+        lens = [sum([len(y) for y in x]) for x in ids]
+        check = all([a-b.item() == 0 for a, b in zip(lens,progress)])
+        # ipdb.set_trace()
+        assert(check)
+        return ids, progress
+
+    def distance_loss(self, generated_coords_all, geometry_graphs, true_coords = None):
+        geom_loss = []
+        for geometry_graph, generated_coords in zip(dgl.unbatch(geometry_graphs), generated_coords_all):
+            src, dst = geometry_graph.edges()
+            src = src.long()
+            dst = dst.long()
+            d_squared = torch.sum((generated_coords[src] - generated_coords[dst]) ** 2, dim=1)
+            geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
+        print("          [AR Distance Loss Step]", geom_loss)
+        if true_coords is not None:
+            for a, b, c, d in zip (generated_coords_all, geom_loss, true_coords, dgl.unbatch(geometry_graphs)):
+                print("          Aligned MSE", a.shape, self.rmsd(a, c, align = True))
+                print("          Gen", a)
+                print("          True", c)
+                print("          distance", b)
+                print("          edges", d.edges())
+        return torch.mean(torch.tensor(geom_loss))
+
+    def align(self, source, target):
+        # Rot, trans = rigid_transform_Kabsch_3D_torch(input.T, target.T)
+        # lig_coords = ((Rot @ (input).T).T + trans.squeeze())
+        # Kabsch RMSD implementation below taken from EquiBind
+        # if source.shape[0] == 2:
+        #     return align_sets_of_two_points(target, source) #! Kabsch seems to work better and it is ok
+        lig_coords_pred = target
+        lig_coords = source
+        if source.shape[0] == 1:
+            return source
+        lig_coords_pred_mean = lig_coords_pred.mean(dim=0, keepdim=True)  # (1,3)
+        lig_coords_mean = lig_coords.mean(dim=0, keepdim=True)  # (1,3)
+
+        A = (lig_coords_pred - lig_coords_pred_mean).transpose(0, 1) @ (lig_coords - lig_coords_mean)+1e-7 #added noise to help with gradients
+
+        U, S, Vt = torch.linalg.svd(A)
+
+        corr_mat = torch.diag(torch.tensor([1, 1, torch.sign(torch.det(A))], device=lig_coords_pred.device))
+        rotation = (U @ corr_mat) @ Vt
+        translation = lig_coords_pred_mean - torch.t(rotation @ lig_coords_mean.t())  # (1,3)
+        return (rotation @ lig_coords.t()).t() + translation
+        # return lig_coords
+    
+    def rmsd(self, generated, true, align = False):
+        if align:
+            true = self.align(true, generated)
+        loss = self.mse(true, generated)
+        return loss
+
     def forward(self, cg_mol_graph, rdkit_mol_graph, cg_frag_ids, true_geo_batch):
         # ipdb.set_trace()
         rdkit_reference = copy.deepcopy(rdkit_mol_graph)
@@ -494,15 +593,25 @@ class Decoder(nn.Module):
         rdkit_mol_graph.ndata['x_cc'] = X_cc
         rdkit_mol_graph.ndata['feat_cc'] = H_cc
         bfs = cg_mol_graph.ndata['bfs'].flatten()
+        ref = cg_mol_graph.ndata['bfs_reference_point'].flatten()
+        X_cc = copy.deepcopy(X_cc.detach())
+        H_cc = copy.deepcopy(H_cc.detach())
+        # ipdb.set_trace()
         bfs_order = []
+        ref_order = []
         start = 0
         for i in cg_mol_graph.batch_num_nodes():
             bfs_order.append(bfs[start : start + i])
+            ref_order.append(ref[start: start + i])
             start += i
         # ipdb.set_trace()
         progress = rdkit_mol_graph.batch_num_nodes().cpu()
+        # print("progress", progress)
         final_molecule = rdkit_mol_graph
         frag_ids = self.sort_ids(cg_frag_ids, bfs_order)
+        # print(frag_ids)
+        frag_ids, progress = self.add_reference(frag_ids, ref_order, progress) #done
+        # ipdb.set_trace()
         frag_batch = defaultdict(list) # keys will be time steps
         # TODO: build similar object for reference atoms as they are already in BFS order
         # TODO: does this work or do we need to sort them like hte BFS
@@ -522,6 +631,7 @@ class Decoder(nn.Module):
         returns = []
         for t in range(max_nodes):
             # ipdb.set_trace()
+            print("[Auto Regressive Step]")
             id_batch = frag_batch[t]
             # print("ID", id_batch)
             latent, geo_latent = self.isolate_next_subgraph(final_molecule, id_batch, true_geo_batch)
@@ -534,15 +644,18 @@ class Decoder(nn.Module):
             ref_coords_B_split = [x.ndata['x_true'] for x in dgl.unbatch(current_molecule)] if current_molecule is not None else None
             ar_con_input = current_molecule.ndata['x_cc'] if current_molecule is not None else None
             gen_input = latent.ndata['x_cc']
-            print("[AR step end] geom losses total", geom_losses)
+            print("[AR step end] geom losses total from decoder", t, geom_losses)
+            dist_loss = self.distance_loss([x.ndata['x_cc'] for x in dgl.unbatch(latent)], geo_latent, [x.ndata['x_true'] for x in dgl.unbatch(latent)])
+            # print("True Distance Check")
+            # _ = self.distance_loss([x.ndata['x_true'] for x in dgl.unbatch(latent)], geo_latent)
             print()
-            returns.append((coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory, id_batch, ref_coords_A, ref_coords_B, ref_coords_B_split, gen_input, ar_con_input))
+            returns.append((coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory, id_batch, ref_coords_A, ref_coords_B, ref_coords_B_split, gen_input, ar_con_input, dist_loss))
             # print("ID Check", returns[0][6])
             # print(f'{t} A MSE = {torch.mean(torch.sum(ref_coords_A - coords_A, dim = 1)**2)}')
             # if ref_coords_B is not None:
-            if torch.gt(coords_A, 1000).any() or  torch.lt(coords_A, -1000).any() or (coords_B is not None and torch.gt(coords_B, 1000).any()) or (coords_B is not None and torch.lt(coords_B, -1000).any()):
-                # ipdb.set_trace()
-                print("Caught Explosion in Decode step")
+            # if torch.gt(coords_A, 1000).any() or  torch.lt(coords_A, -1000).any() or (coords_B is not None and torch.gt(coords_B, 1000).any()) or (coords_B is not None and torch.lt(coords_B, -1000).any()):
+            #     # ipdb.set_trace()
+            #     print("Caught Explosion in Decode step")
                 # X_cc, H_cc = self.channel_selection(cg_mol_graph, rdkit_mol_graph, cg_frag_ids)
                 # coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory = self.autoregressive_step(latent, current_molecule, t, geo_latent, geo_current)
 
@@ -555,8 +668,52 @@ class Decoder(nn.Module):
                 for idx, ids in enumerate(id_batch):
                     if ids is None:
                         continue
+                    ids = [x for x in ids if x not in set(current_molecule_ids[idx])] #! added to prevent overlap of reference
                     current_molecule_ids[idx].extend(ids)
             # ipdb.set_trace() # erroring on dgl.unbatch(final_molecule) for some odd reason --> fixed by adding an else above
             current_molecule, geo_current = self.gather_current_molecule(final_molecule, current_molecule_ids, progress, true_geo_batch)
 
         return final_molecule, rdkit_reference, returns, (X_cc, H_cc)
+
+
+def align_sets_of_two_points(set1, set2):
+    """
+    Aligns two sets of two points using the vectors defined by the points.
+
+    Args:
+        set1 (torch.Tensor): A 2x3 tensor representing the first set of two points.
+        set2 (torch.Tensor): A 2x3 tensor representing the second set of two points.
+
+    Returns:
+        torch.Tensor: A 2x3 tensor representing the second set of points, aligned with the first set.
+    """
+    # Compute the vectors defined by the points in each set
+    vector1 = set1[1] - set1[0]
+    vector2 = set2[1] - set2[0]
+
+    # Check if the vectors have opposite orientations
+    if torch.dot(vector1, vector2) < 0:
+        # Flip one of the sets
+        set2 = torch.flip(set2, dims=[0])
+        vector2 = set2[1] - set2[0]
+
+    # Compute the cross product and dot product of the vectors
+    cross_product = torch.cross(vector1, vector2)
+    dot_product = torch.dot(vector1, vector2)
+
+    # Compute the rotation matrix using the Rodriguez formula
+    theta = torch.acos(dot_product / (torch.norm(vector1) * torch.norm(vector2)))
+    k = cross_product / torch.norm(cross_product)
+    k_cross = torch.tensor([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    rotation_matrix = torch.eye(3) + torch.sin(theta) * k_cross + (1 - torch.cos(theta)) * torch.mm(k_cross, k_cross)
+
+    # Compute the translation vector using the midpoints of the points in each set
+    midpoint1 = (set1[0] + set1[1]) / 2
+    midpoint2 = (set2[0] + set2[1]) / 2
+    translation_vector = midpoint1 - torch.mm(rotation_matrix, midpoint2.view(3,1)).view(-1)
+
+    # Apply the rotation and translation to the second set
+    aligned_set2 = torch.mm(rotation_matrix, set2.t()) + translation_vector.view(3,1)
+    aligned_set2 = aligned_set2.t()
+
+    return aligned_set2

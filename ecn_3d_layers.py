@@ -712,7 +712,8 @@ class Coarse_Grain_3DLayer(nn.Module):
 
             A_graph.ndata['v_now'] = v_A
             B_graph.ndata['v_now'] = v_B
-
+            print("[Encoder Coarse] ecn input V A", torch.min(v_A).item(), torch.max(v_A).item())
+            print("[Encoder Coarse] ecn input V B", torch.min(v_B).item(), torch.max(v_B).item())
             A_graph.apply_edges(fn.u_sub_v('x_pool', 'x_pool', 'r_ij'))  # x_i - x_j
             B_graph.apply_edges(fn.u_sub_v('x_pool', 'x_pool', 'r_ij')) 
 
@@ -758,7 +759,8 @@ class Coarse_Grain_3DLayer(nn.Module):
             # v_evolved_B = self.B_vn_mlp_4(v_evolved_B_input)
             v_evolved_A = self.skip_weight_v * self.A_vn_mlp_4(v_evolved_A_input) + (1. - self.skip_weight_v) * v_A
             v_evolved_B = self.skip_weight_v * self.B_vn_mlp_4(v_evolved_A_input) + (1. - self.skip_weight_v) * v_B
-
+            print("[Encoder Coarse] ecn output V A", torch.min(v_evolved_A).item(), torch.max(v_evolved_A).item())
+            print("[Encoder Coarse] ecn output V B", torch.min(v_evolved_B).item(), torch.max(v_evolved_B).item())
             return v_evolved_A, h_A, v_evolved_B, h_B
     #         # Equation 3: coordinate update
     #         A_graph.update_all(self.update_x_moment_A, fn.mean('m', 'x_update')) # phi_x coord_mlp

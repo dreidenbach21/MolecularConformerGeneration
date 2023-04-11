@@ -722,7 +722,8 @@ class IEGMN_Bidirectional(nn.Module):
             #                     )
             print("[Decoder MPNN] geom loss of IEGMN layer", geom_loss.item())
             if geom_loss.item() > 1e10:
-                ipdb.set_trace()
+                # ipdb.set_trace()
+                print("Distance blow up")
             geom_losses = geom_losses + geom_loss
             full_trajectory.extend(trajectory)
         return coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory

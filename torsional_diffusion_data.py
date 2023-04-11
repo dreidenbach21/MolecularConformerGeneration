@@ -35,6 +35,20 @@ drugs_types = {'H': 0, 'Li': 1, 'B': 2, 'C': 3, 'N': 4, 'O': 5, 'F': 6, 'Na': 7,
                'Ga': 21, 'Ge': 22, 'As': 23, 'Se': 24, 'Br': 25, 'Ag': 26, 'In': 27, 'Sb': 28, 'I': 29, 'Gd': 30,
                'Pt': 31, 'Au': 32, 'Hg': 33, 'Bi': 34}
 
+def check_distances(molecule, geometry_graph):
+    src, dst = geometry_graph.edges()
+    src = src.long()
+    dst = dst.long()
+    generated_coords = molecule.ndata['x_true']
+    d_squared = torch.sum((generated_coords[src] - generated_coords[dst]) ** 2, dim=1)
+    error = torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2)
+    print("Distance Loss Check", error)
+    print(geometry_graph.edata['feat'])
+    print(np.linalg.norm(((generated_coords[src] - generated_coords[dst]).numpy()), axis = 1))
+    print(np.linalg.norm(((molecule.ndata['x'][src] - molecule.ndata['x'][dst]).numpy()), axis = 1))
+    # ! This is not returning 0 why?
+    return error
+
 def one_k_encoding(value, choices):
     """
     Creates a one-hot encoding with an extra category for uncommon values.
@@ -127,8 +141,9 @@ def featurize_mol(mol, types=drugs_types, use_rdkit_coords = False, seed = 0, ra
         print('kabsch RMSD between aligned rdkit ligand and true ligand is ', np.sqrt(np.sum((lig_coords - true_lig_coords) ** 2, axis=1).mean()).item())
 #         lig_coords = align(torch.from_numpy(rdkit_coords), torch.from_numpy(true_lig_coords)).numpy()
 #         # print('LOSS kabsch RMSD between rdkit ligand and true ligand is ', np.sqrt(np.sum((lig_coords - true_lig_coords) ** 2, axis=1).mean()).item())
-#         loss = torch.nn.MSELoss()
-#         print('LOSS kabsch MSE between rdkit ligand and true ligand is ', loss(torch.from_numpy(true_lig_coords), torch.from_numpy(lig_coords)).cpu().detach().numpy().item())
+        loss = torch.nn.MSELoss()
+        loss_error = loss(torch.from_numpy(true_lig_coords), torch.from_numpy(lig_coords)).cpu().detach().numpy().item()
+        print('LOSS kabsch MSE between rdkit ligand and true ligand is ', loss_error )
     else:
         lig_coords = true_lig_coords
     num_nodes = lig_coords.shape[0]
@@ -193,6 +208,8 @@ def featurize_mol(mol, types=drugs_types, use_rdkit_coords = False, seed = 0, ra
     graph.ndata['x_ref'] = torch.from_numpy(np.array(lig_coords).astype(np.float32))
     graph.ndata['x_true'] = torch.from_numpy(np.array(true_lig_coords).astype(np.float32))
     graph.ndata['mu_r_norm'] = torch.from_numpy(np.array(mean_norm_list).astype(np.float32))
+    if use_rdkit_coords:
+        graph.ndata['rdkit_loss'] = torch.from_numpy(np.array([loss_error]*node_features.shape[0]).astype(np.float32)).reshape(-1,1)
     return graph
 
 def mol_to_nx(mol):
@@ -406,19 +423,30 @@ class ConformerDataset(DGLDataset):
         A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion = self.use_diffusion)
         A_cg = conditional_coarsen_3d(data, A_frag_ids, A_cg_map, A_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
         geometry_graph_A = get_geometry_graph(mol)
+        err = check_distances(data, geometry_graph_A)
+        if err.item() > 1e-3:
+            import ipdb; ipdb.set_trace()
+            data = self.featurize_mol(mol_dic)
         Ap = create_pooling_graph(data, A_frag_ids)
         geometry_graph_A_cg = get_coarse_geometry_graph(A_cg, A_cg_map)
         print(A_frag_ids, A_cg_bonds, A_cg_map)
-        print("B")
+        # import ipdb; ipdb.set_trace()
+        print("\nB")
+        # rdmol_dic = copy.deepcopy(mol_dic)
         data_B = self.featurize_mol(mol_dic, use_rdkit_coords = True)
         if not data_B:
             self.failures['featurize_mol_failed_B'] += 1
             return False
+        
         B_frags, B_frag_ids, B_adj, B_out, B_bond_break, B_cg_bonds, B_cg_map = coarsen_molecule(mol, use_diffusion = self.use_diffusion)
         B_cg = conditional_coarsen_3d(data_B, B_frag_ids, B_cg_map, B_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
-        geometry_graph_B = get_geometry_graph(mol)
+        geometry_graph_B = copy.deepcopy(geometry_graph_A) #get_geometry_graph(mol)
         Bp = create_pooling_graph(data_B, B_frag_ids)
         geometry_graph_B_cg = get_coarse_geometry_graph(B_cg, B_cg_map)
+        err = check_distances(data_B, geometry_graph_B)
+        if err.item() > 1e-3:
+            import ipdb; ipdb.set_trace()
+            data_B = self.featurize_mol(mol_dic, use_rdkit_coords = True)
 #         data.edge_mask = torch.tensor(edge_mask)
 #         data.mask_rotate = mask_rotate
         return ((data, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids), (data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg))
@@ -481,11 +509,13 @@ class ConformerDataset(DGLDataset):
             if self.boltzmann_resampler is not None:
                 # torsional Boltzmann generator uses only the local structure of the first conformer
                 break
+            if True:
+                break #! only look at first of the dataset for now since we only need 1. Causes distance issues otherwise
 
         # return None if no non-reactive conformers were found
         if len(pos) == 0:
             return None
-
+        # import ipdb; ipdb.set_trace()
         data = featurize_mol(correct_mol, self.types, use_rdkit_coords = use_rdkit_coords)
         # dos = Draw.MolDrawOptions()
         # dos.addAtomIndices=True
