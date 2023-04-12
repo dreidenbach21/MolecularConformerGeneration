@@ -1,7 +1,7 @@
 from ecn_3d import *
 from equivariant_model_utils import *
 from geometry_utils import *
-from decoder_utils import IEGMN_Bidirectional
+from decoder_utils_delta import IEGMN_Bidirectional_Delta
 from collections import defaultdict
 import numpy as np
 import copy
@@ -10,9 +10,9 @@ import torch.nn.functional as F
 import ipdb
 from neko_fixed_attention import neko_MultiheadAttention
 
-class VAE(nn.Module):
+class VAE_Delta(nn.Module):
     def __init__(self, ecn, D, F, iegmn, atom_embedder, device = "cuda"):
-        super(VAE, self).__init__()
+        super(VAE_Delta, self).__init__()
         self.encoder = Encoder(ecn, D, F).to(device)
         self.decoder = Decoder(iegmn, D, F, atom_embedder, device).to(device)
         self.D = D 
@@ -55,8 +55,8 @@ class VAE(nn.Module):
             src = src.long()
             dst = dst.long()
             generated_coords = generated_mol.ndata['x_cc']
-            d_squared = torch.sum((generated_coords[src] - generated_coords[dst]) ** 2, dim=1)
-            # geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2)) #TODO: scaling hurt performance
+            # d_squared = torch.sum((generated_coords[src] - generated_coords[dst]) ** 2, dim=1)
+            geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2)) #TODO: scaling hurt performance
             geom_loss.append(torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
         print("[Distance Loss]", geom_loss)
         return torch.mean(torch.tensor(geom_loss))
@@ -118,9 +118,9 @@ class VAE(nn.Module):
         # loss += l2_loss
         # ipdb.set_trace()
         rdkit_loss = sum([x.ndata['rdkit_loss'][0] for x in dgl.unbatch(rdkit_reference)])
-        distance_lambda = 1
+        distance_lambda = 10
         distance_loss = distance_lambda*self.distance_loss(generated_molecule, geometry_graph)
-        ar_dist_lambda = 1
+        ar_dist_lambda = 10
         ar_dist_loss = ar_dist_lambda*ar_dist_loss
         print("[Loss Func] distance", distance_loss)
         print("[Loss Func] ar distance", ar_dist_loss)
@@ -542,7 +542,7 @@ class Decoder(nn.Module):
                     progress[batch_idx] += 1
             batch_idx += 1
         lens = [sum([len(y) for y in x]) for x in ids]
-        check = all([a-b.item() == 0 for a, b in zip(lens,progress)])
+        # check = all([a-b.item() == 0 for a, b in zip(lens,progress)])
         # ipdb.set_trace()
         assert(check)
         return ids, progress
@@ -554,8 +554,8 @@ class Decoder(nn.Module):
             src = src.long()
             dst = dst.long()
             d_squared = torch.sum((generated_coords[src] - generated_coords[dst]) ** 2, dim=1)
-            # geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
-            geom_loss.append(torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
+            geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
+            # geom_loss.append(torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
         print("          [AR Distance Loss Step]", geom_loss)
         # if true_coords is not None:
         #     for a, b, c, d in zip (generated_coords_all, geom_loss, true_coords, dgl.unbatch(geometry_graphs)):
@@ -595,6 +595,47 @@ class Decoder(nn.Module):
         loss = self.mse(true, generated)
         return loss
 
+    # def isolate_next_subgraph(self, final_molecule, id_batch, true_geo_batch):
+    #     molecules = dgl.unbatch(final_molecule)
+    #     geos = dgl.unbatch(true_geo_batch)
+    #     result = []
+    #     geo_result = []
+    #     # valid = []
+    #     # check = True
+    #     for idx, ids in enumerate(id_batch):
+    #         if ids is None:
+    #             # valid.append((idx, False))
+    #             # check = False
+    #             continue
+    #         # else:
+    #             # valid.append((idx, True))
+    #         fine = molecules[idx]
+    #         subg = dgl.node_subgraph(fine, ids)
+    #         result.append(subg)
+
+    #         subgeo = dgl.node_subgraph(geos[idx], ids)
+    #         geo_result.append(subgeo)
+    #     return dgl.batch(result).to(self.device), dgl.batch(geo_result).to(self.device) #valid, check
+
+    def get_reference(self, subgraph, molecule, ref_ids):
+        # references = []
+        result = []
+        info = [(m, x) for m, x in zip(dgl.unbatch(molecule), ref_ids) if x is not None]
+        for g, mid in zip(dgl.unbatch(subgraph), info):
+            m, id = mid
+            if id is None:
+                continue
+            r = id[0]
+            if r == -1:
+                # references.append(torch.zeros_like(g.ndata['x_cc']))
+                g.ndata['reference_point'] = torch.zeros_like(g.ndata['x_cc'])
+            else:
+                point = molecule.ndata['x_cc'][r].reshape(1,-1)
+                # references.append(point.repeat(g.ndata['x_cc'].shape[0]))
+                g.ndata['reference_point'] = point.repeat(g.ndata['x_cc'].shape[0], 1)
+            result.append(g)
+        return dgl.batch(result).to(self.device) #, references
+
     def forward(self, cg_mol_graph, rdkit_mol_graph, cg_frag_ids, true_geo_batch):
         # ipdb.set_trace()
         rdkit_reference = copy.deepcopy(rdkit_mol_graph)
@@ -619,12 +660,10 @@ class Decoder(nn.Module):
         final_molecule = rdkit_mol_graph
         frag_ids = self.sort_ids(cg_frag_ids, bfs_order)
         # print(frag_ids)
-        frag_ids, progress = self.add_reference(frag_ids, ref_order, progress) #done
+        # frag_ids, progress = self.add_reference(frag_ids, ref_order, progress) #! Do not need reference when we do delta coordinates
         # ipdb.set_trace()
         frag_batch = defaultdict(list) # keys will be time steps
-        # TODO: build similar object for reference atoms as they are already in BFS order
-        # TODO: does this work or do we need to sort them like hte BFS
-        # TODO: print out what the references look like adn the frag ids after sorting to make sure they line up and look realistic
+       
         max_nodes = max(cg_mol_graph.batch_num_nodes()).item()
         for t in range(max_nodes):
             for idx, frag in enumerate(frag_ids): # iterate over moelcules
@@ -632,8 +671,15 @@ class Decoder(nn.Module):
                 if t < len(frag):
                     ids = list(frag[t])
                 frag_batch[t].append(ids)
-
+        ref_batch = defaultdict(list)
         # ipdb.set_trace()
+        for t in range(max_nodes):
+            for idx, refs in enumerate(ref_order): # iterate over moelcules
+                ids = None
+                if t < len(refs):
+                    ids = [int(refs[t].item())]
+                ref_batch[t].append(ids)
+
         current_molecule_ids = None
         current_molecule = None
         geo_current = None
@@ -642,8 +688,13 @@ class Decoder(nn.Module):
             # ipdb.set_trace()
             print("[Auto Regressive Step]")
             id_batch = frag_batch[t]
+            r_batch = ref_batch[t]
             # print("ID", id_batch)
+            if t == 1:
+                ipdb.set_trace()
             latent, geo_latent = self.isolate_next_subgraph(final_molecule, id_batch, true_geo_batch)
+            latent = self.get_reference(latent, final_molecule, r_batch)
+            # ipdb.set_trace()
             # if not check:
             #     current_molecule = self.adaptive_batching(current_molecule)
             # ipdb.set_trace()
@@ -683,46 +734,3 @@ class Decoder(nn.Module):
             current_molecule, geo_current = self.gather_current_molecule(final_molecule, current_molecule_ids, progress, true_geo_batch)
 
         return final_molecule, rdkit_reference, returns, (X_cc, H_cc)
-
-
-def align_sets_of_two_points(set1, set2):
-    """
-    Aligns two sets of two points using the vectors defined by the points.
-
-    Args:
-        set1 (torch.Tensor): A 2x3 tensor representing the first set of two points.
-        set2 (torch.Tensor): A 2x3 tensor representing the second set of two points.
-
-    Returns:
-        torch.Tensor: A 2x3 tensor representing the second set of points, aligned with the first set.
-    """
-    # Compute the vectors defined by the points in each set
-    vector1 = set1[1] - set1[0]
-    vector2 = set2[1] - set2[0]
-
-    # Check if the vectors have opposite orientations
-    if torch.dot(vector1, vector2) < 0:
-        # Flip one of the sets
-        set2 = torch.flip(set2, dims=[0])
-        vector2 = set2[1] - set2[0]
-
-    # Compute the cross product and dot product of the vectors
-    cross_product = torch.cross(vector1, vector2)
-    dot_product = torch.dot(vector1, vector2)
-
-    # Compute the rotation matrix using the Rodriguez formula
-    theta = torch.acos(dot_product / (torch.norm(vector1) * torch.norm(vector2)))
-    k = cross_product / torch.norm(cross_product)
-    k_cross = torch.tensor([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
-    rotation_matrix = torch.eye(3) + torch.sin(theta) * k_cross + (1 - torch.cos(theta)) * torch.mm(k_cross, k_cross)
-
-    # Compute the translation vector using the midpoints of the points in each set
-    midpoint1 = (set1[0] + set1[1]) / 2
-    midpoint2 = (set2[0] + set2[1]) / 2
-    translation_vector = midpoint1 - torch.mm(rotation_matrix, midpoint2.view(3,1)).view(-1)
-
-    # Apply the rotation and translation to the second set
-    aligned_set2 = torch.mm(rotation_matrix, set2.t()) + translation_vector.view(3,1)
-    aligned_set2 = aligned_set2.t()
-
-    return aligned_set2

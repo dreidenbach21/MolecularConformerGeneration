@@ -1,6 +1,6 @@
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]="7"
+os.environ["CUDA_VISIBLE_DEVICES"]="6"
 import sys
 import pickle
 import matplotlib.pyplot as plt
@@ -29,8 +29,8 @@ from molecule_utils import *
 from ecn_3d_layers import *
 from ecn_3d import *
 from equivariant_model_utils import *
-from vae import *
-from decoder_utils import *
+from vae_delta import *
+from decoder_utils_delta import *
 from geometry_utils import *
 from torsional_diffusion_data import load_torsional_data, QM9_DIMS, DRUG_DIMS
 
@@ -79,10 +79,10 @@ drugs_path = geom_path + "drugs/"
 print("Loading QM9...")
 # with open(geom_path + "qm9_safe_v2.pickle", 'rb') as f:
 #     qm9 = pickle.load(f)
-batch_size = 50 #25
-train_limit = 2500 #100
+batch_size = 25 #25
+train_limit = 100 #100
 train_loader, train_data = load_torsional_data(batch_size = batch_size, mode= 'train', limit_mols = train_limit)
-val_limit = 50 #25
+val_limit = 25 #25
 val_loader, val_data = load_torsional_data(batch_size = batch_size, mode= 'val', limit_mols = val_limit)
 print("Loading QM9 --> Done")
 
@@ -109,10 +109,10 @@ if __name__ =="__main__":
   ecn = ECN3D(device = "cuda", **ecn_model_params).cuda()
   atom_embedder = ecn.atom_embedder
   ecn_model_params['layer_norm'] = 'LN' # Have to switch for AR #! EB used BN but we switched all to LN
-  iegmn = IEGMN_Bidirectional(device = "cuda", **ecn_model_params).cuda()
+  iegmn = IEGMN_Bidirectional_Delta(device = "cuda", **ecn_model_params).cuda()
   F = ecn_model_params["coord_F_dim"]
   D = ecn_model_params["latent_dim"]
-  model = VAE(ecn, D, F, iegmn, atom_embedder, device = "cuda")
+  model = VAE_Delta(ecn, D, F, iegmn, atom_embedder, device = "cuda")
   print("CUDA CHECK", next(model.parameters()).is_cuda)
   print("# of Encoder Params = ", sum(p.numel() for p in model.encoder.parameters() if p.requires_grad))
   print("# of Decoder Params = ", sum(p.numel() for p in model.decoder.parameters() if p.requires_grad))
@@ -131,8 +131,8 @@ if __name__ =="__main__":
   torch.autograd.set_detect_anomaly(True)
   # train_loss_log_name = "torsional_diffusion_test_geomol_1000_minpostclamp" + "_train"
   # val_loss_log_name = "torsional_diffusion_test_geomol2_1000_minpostclamp" + "_val"
-  train_loss_log_name = "n1_ref_test_dist_large_soft" + "_train"
-  val_loss_log_name = "n1_ref_test_dist_large_soft" + "_val"
+  train_loss_log_name = "n1_ref_test_dist_delta" + "_train"
+  val_loss_log_name = "n1_ref_test_dist_delta" + "_val"
   train_loss_log_total, val_loss_log_total = [], []
   for epoch in range(10000):
     print("\n\n\n\n\nEpoch", epoch)
