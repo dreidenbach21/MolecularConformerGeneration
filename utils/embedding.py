@@ -17,7 +17,6 @@ from scipy.special import softmax
 from torch import nn
 
 from geometry_utils import rigid_transform_Kabsch_3D, rigid_transform_Kabsch_3D_torch
-from logger import log
 
 # biopython_parser = PDBParser()
 # periodic_table = GetPeriodicTable()
@@ -113,7 +112,7 @@ class AtomEncoder(torch.nn.Module):
         if self.num_scalar_features > 0 and self.use_scalar_feat:
             x_embedding += self.linear(x[:, self.num_categorical_features:])
         if torch.isnan(x_embedding).any():
-            log('nan')
+            print('nan')
         return x_embedding
 
 class AtomEncoderTorsionalDiffusion(torch.nn.Module):
@@ -185,7 +184,7 @@ def get_lig_graph(mol, lig_coords, radius=20, max_neighbor=None):
             dst = list(np.argsort(distance[i, :]))[1: max_neighbor + 1]  # closest would be self loop
         if len(dst) == 0:
             dst = list(np.argsort(distance[i, :]))[1:2]  # closest would be the index i itself > self loop
-            log(
+            print(
                 f'The lig_radius {radius} was too small for one lig atom such that it had no neighbors. So we connected {i} to the closest other lig atom {dst}')
         assert i not in dst
         src = [i] * len(dst)
@@ -392,7 +391,7 @@ def get_lig_graph_multiple_conformer(mol, name, radius=20, max_neighbors=None, u
     for i in range(num_confs):
         R, t = rigid_transform_Kabsch_3D(all_lig_coords[i].T, true_lig_coords.T)
         lig_coords = ((R @ (all_lig_coords[i]).T).T + t.squeeze())
-        log('kabsch RMSD between rdkit ligand and true ligand is ',
+        print('kabsch RMSD between rdkit ligand and true ligand is ',
             np.sqrt(np.sum((lig_coords - true_lig_coords) ** 2, axis=1).mean()).item())
 
         num_nodes = lig_coords.shape[0]
@@ -410,7 +409,7 @@ def get_lig_graph_multiple_conformer(mol, name, radius=20, max_neighbors=None, u
                 dst = list(np.argsort(distance[i, :]))[1: max_neighbors + 1]  # closest would be self loop
             if len(dst) == 0:
                 dst = list(np.argsort(distance[i, :]))[1:2]  # closest would be the index i itself > self loop
-                log(
+                print(
                     f'The lig_radius {radius} was too small for one lig atom such that it had no neighbors. So we connected {i} to the closest other lig atom {dst}')
             assert i not in dst
             src = [i] * len(dst)
@@ -449,7 +448,7 @@ def get_lig_graph_revised(mol, name, radius=20, max_neighbors=None, use_rdkit_co
             rdkit_coords = get_rdkit_coords(mol).numpy()
             R, t = rigid_transform_Kabsch_3D(rdkit_coords.T, true_lig_coords.T)
             lig_coords = ((R @ (rdkit_coords).T).T + t.squeeze())
-            log('kabsch RMSD between rdkit ligand and true ligand is ', np.sqrt(np.sum((lig_coords - true_lig_coords) ** 2, axis=1).mean()).item())
+            print('kabsch RMSD between rdkit ligand and true ligand is ', np.sqrt(np.sum((lig_coords - true_lig_coords) ** 2, axis=1).mean()).item())
         except Exception as e:
             lig_coords = true_lig_coords
             with open('temp_create_dataset_rdkit_timesplit_no_lig_or_rec_overlap_train.log', 'a') as f:
@@ -479,7 +478,7 @@ def get_lig_graph_revised(mol, name, radius=20, max_neighbors=None, use_rdkit_co
             dst = list(np.argsort(distance[i, :]))[1: max_neighbors + 1]  # closest would be self loop
         if len(dst) == 0:
             dst = list(np.argsort(distance[i, :]))[1:2]  # closest would be the index i itself > self loop
-            log(
+            print(
                 f'The lig_radius {radius} was too small for one lig atom such that it had no neighbors. So we connected {i} to the closest other lig atom {dst}')
         assert i not in dst
         assert dst != []

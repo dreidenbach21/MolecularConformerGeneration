@@ -29,3 +29,5 @@ use_scalar_features: False # Have a look at lig_feature_dims in process_mols.py 
 num_A_feats: None # leave as None to use all ligand features. Have a look at lig_feature_dims in process_mols.py to see what features we are talking about. If this is 1, only the first of those will be used.
 normalize_coordinate_update: True
 weight_sharing: False
+
+teacher_forcing: True

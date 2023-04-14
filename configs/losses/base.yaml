@@ -1,7 +1,13 @@
 aligned_global_mse: True
+global_mse_weight: 1
 aligned_ar_mse: True
+ar_mse_weight: 1
 
 aligned_global_distance: True
+distance_weight: 1
 aligned_ar_distance: True
+ar_distance_weight: 1
 
 ar_loss_bottom_up: True
+
+kl_weight: 1
