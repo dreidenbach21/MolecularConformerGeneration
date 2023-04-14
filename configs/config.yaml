@@ -1,0 +1,18 @@
+# my_config.yaml
+defaults:
+  - wandb:
+      project: 'MCG'
+      name: 'test1'
+      notes: 'This is a wandb hydra test'
+  - encoder: small
+  - decoder: small
+  - vae: base
+  - optimizer: base
+  - losses: base
+  - data: base
+  - coordinates: 'absolute'
+
+hydra:
+  job:
+    env_set: 
+      CUDA_VISIBLE_DEVICES: 6

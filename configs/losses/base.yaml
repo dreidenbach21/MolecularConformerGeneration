@@ -1,0 +1,7 @@
+aligned_global_mse: True
+aligned_ar_mse: True
+
+aligned_global_distance: True
+aligned_ar_distance: True
+
+ar_loss_bottom_up: True
