@@ -43,7 +43,7 @@ ecn_model_params = {
 #   "B_evolve": True,
 #   "B_no_softmax": False,
 #   "A_no_softmax": False,
-  "n_lays": 3,  # 5 in  good run
+  "n_lays": 3,  # 3 5 in  good run
   "debug": False,
   "shared_layers": False, # False in good run
   "noise_decay_rate": 0.5,
@@ -79,10 +79,10 @@ drugs_path = geom_path + "drugs/"
 print("Loading QM9...")
 # with open(geom_path + "qm9_safe_v2.pickle", 'rb') as f:
 #     qm9 = pickle.load(f)
-batch_size = 50 #25
-train_limit = 2500 #100
+batch_size = 25#50 #25
+train_limit = 100#2500 #100
 train_loader, train_data = load_torsional_data(batch_size = batch_size, mode= 'train', limit_mols = train_limit)
-val_limit = 50 #25
+val_limit = 25#50 #25
 val_loader, val_data = load_torsional_data(batch_size = batch_size, mode= 'val', limit_mols = val_limit)
 print("Loading QM9 --> Done")
 
@@ -131,8 +131,8 @@ if __name__ =="__main__":
   torch.autograd.set_detect_anomaly(True)
   # train_loss_log_name = "torsional_diffusion_test_geomol_1000_minpostclamp" + "_train"
   # val_loss_log_name = "torsional_diffusion_test_geomol2_1000_minpostclamp" + "_val"
-  train_loss_log_name = "n1_ref_test_dist_large_soft" + "_train"
-  val_loss_log_name = "n1_ref_test_dist_large_soft" + "_val"
+  train_loss_log_name = "n1_ref_test_dist_no_clamp_budget52clamp2" + "_train"
+  val_loss_log_name = "n1_ref_test_dist_no_clamp_budget52clamp2" + "_val"
   train_loss_log_total, val_loss_log_total = [], []
   for epoch in range(10000):
     print("\n\n\n\n\nEpoch", epoch)

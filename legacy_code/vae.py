@@ -20,8 +20,8 @@ class VAE(nn.Module):
         self.kl_v_beta = 1#e-4 2.5
         self.kl_h_beta = 0#1e-4
         self.kl_reg_beta = 1
-        self.align_kabsch_weight = 20
-        self.ar_rmsd_weight = 10 #1
+        self.align_kabsch_weight = 1 #20
+        self.ar_rmsd_weight = 1 #10 #1
         self.mse = nn.MSELoss()
         # self.mse_sum= nn.MSELoss(reduction='sum')
         self.device = device
@@ -56,8 +56,8 @@ class VAE(nn.Module):
             dst = dst.long()
             generated_coords = generated_mol.ndata['x_cc']
             d_squared = torch.sum((generated_coords[src] - generated_coords[dst]) ** 2, dim=1)
-            # geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2)) #TODO: scaling hurt performance
-            geom_loss.append(torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
+            geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2)) #TODO: scaling hurt performance
+            # geom_loss.append(torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
         print("[Distance Loss]", geom_loss)
         return torch.mean(torch.tensor(geom_loss))
 
@@ -68,7 +68,7 @@ class VAE(nn.Module):
         print("KL prior reg kl", kl_v_reg)
     
         kl_loss = self.kl_v_beta*kl_v + self.kl_h_beta*kl_h + self.kl_reg_beta*kl_v_reg
-        if step < 5:#0:
+        if step < 0:#50:
             kl_loss = 0.1*kl_loss
         
         x_cc, h_cc = channel_selection_info
@@ -120,7 +120,7 @@ class VAE(nn.Module):
         rdkit_loss = sum([x.ndata['rdkit_loss'][0] for x in dgl.unbatch(rdkit_reference)])
         distance_lambda = 1
         distance_loss = distance_lambda*self.distance_loss(generated_molecule, geometry_graph)
-        ar_dist_lambda = 1
+        ar_dist_lambda = 0.3 #1
         ar_dist_loss = ar_dist_lambda*ar_dist_loss
         print("[Loss Func] distance", distance_loss)
         print("[Loss Func] ar distance", ar_dist_loss)
@@ -131,6 +131,7 @@ class VAE(nn.Module):
 
     def std(self, input):
         return 1e-12 + torch.exp(input / 2)
+        #  return 1e-12 + F.softplus(input / 2)
 
     def align(self, source, target):
         # Rot, trans = rigid_transform_Kabsch_3D_torch(input.T, target.T)
@@ -167,7 +168,7 @@ class VAE(nn.Module):
         for chunk in chunks:
             sub_loss = self.rmsd(coords[start: start + chunk, :], coords_ref[start:start+chunk, :], align)
             print("       ", sub_loss.cpu().item(), coords[start: start + chunk, :].shape)
-            if coords[start: start + chunk, :].shape[0] == 1:
+            if coords[start: start + chunk, :].shape[0] == 1 or sub_loss.cpu().item()>3:
                 print("       ", coords[start: start + chunk, :], coords_ref[start: start + chunk, :])
             loss += sub_loss
             start += chunk
@@ -272,6 +273,9 @@ class Encoder(nn.Module):
         print("[Encoder] prior logvar V", torch.min(prior_logvar_V).item(), torch.max(prior_logvar_V).item()) #, torch.sum(prior_logvar_V,  dim = 1))
         print("[Encoder] prior mean h", torch.min(prior_mean_h).item(), torch.max(prior_mean_h).item(), torch.sum(prior_mean_h).item())
         print("[Encoder] prior logvar h", torch.min(prior_logvar_h).item(), torch.max(prior_logvar_h).item(), torch.sum(prior_logvar_h).item())
+
+        print("\n[Enocoder] prior logvar mlp weight norms", torch.norm(self.prior_logvar_V.linear.weight), torch.norm(self.prior_logvar_V.linear2.weight))
+        print("\n[Enocoder] posterior logvar mlp weight norms", torch.norm(self.posterior_logvar_V.linear.weight), torch.norm(self.posterior_logvar_V.linear2.weight))
         Z_V = self.reparameterize(posterior_mean_V, posterior_logvar_V)
         # if torch.gt(Z_V, 100).any() or  torch.lt(Z_V, -100).any():
         #         ipdb.set_trace()
@@ -305,8 +309,8 @@ class Encoder(nn.Module):
 
     def reparameterize(self, mean, logvar, scale = 1.0):
         # scale = 0.3 # trying this
-        # sigma = 1e-12 + torch.exp(scale*logvar / 2)
-        sigma = 1e-12 + F.softplus(scale*logvar / 2)
+        sigma = 1e-12 + torch.exp(scale*logvar / 2)
+        # sigma = 1e-12 + F.softplus(scale*logvar / 2)
         eps = torch.randn_like(mean)
         # if torch.gt(mean + eps*sigma, 100).any() or  torch.lt(mean + eps*sigma, -100).any():
         #         ipdb.set_trace()
@@ -322,17 +326,37 @@ class Encoder(nn.Module):
         # ipdb.set_trace() #TODO look into softplus instead of exp
         # p_std = 1e-12 + torch.exp(z_logvar / 2)
         # q_std = 1e-12 + torch.exp(z_logvar_prior / 2)
-        p_std = 1e-12 + F.softplus(z_logvar / 2)
-        q_std = 1e-12 + F.softplus(z_logvar_prior / 2)
+        # # p_std = 1e-12 + F.softplus(z_logvar / 2)
+        # # q_std = 1e-12 + F.softplus(z_logvar_prior / 2)
+        # q_mean = z_mean_prior
+        # p_mean = z_mean
+        # var_ratio = (p_std / q_std).pow(2).sum(-1)
+        # t1 = ((p_mean - q_mean) / q_std).pow(2).sum(-1)
+        # if coordinates:
+        #     var_ratio = var_ratio.sum(-1)
+        #     t1 = t1.sum(-1)
+        # kl1 =  0.5 * (var_ratio + t1 - 1 - var_ratio.log()) # shape = number of CG beads
+        # return kl.mean()
+        free_bits = 5
+        free_bits_per_dim = free_bits/z_mean[0].numel()
+
+        p_std = 1e-12 + torch.exp(z_logvar / 2)
+        q_std = 1e-12 + torch.exp(z_logvar_prior / 2)
+        # p_std = 1e-12 + F.softplus(z_logvar / 2)
+        # q_std = 1e-12 + F.softplus(z_logvar_prior / 2)
         q_mean = z_mean_prior
         p_mean = z_mean
-        var_ratio = (p_std / q_std).pow(2).sum(-1)
-        t1 = ((p_mean - q_mean) / q_std).pow(2).sum(-1)
-        if coordinates:
-            var_ratio = var_ratio.sum(-1)
-            t1 = t1.sum(-1)
+        var_ratio = (p_std / q_std).pow(2)
+        t1 = ((p_mean - q_mean) / q_std).pow(2)
         kl =  0.5 * (var_ratio + t1 - 1 - var_ratio.log()) # shape = number of CG beads
+        kl = torch.clamp(kl, min = free_bits_per_dim)
+        # ipdb.set_trace()
+        kl = kl.sum(-1)
+        if coordinates:
+            kl = kl.sum(-1)
         return kl.mean()
+
+        
 
 class Decoder(nn.Module):
     def __init__(self, iegmn, D, F, atom_embedder, device = "cuda", norm="ln", teacher_forcing = True):
@@ -554,8 +578,8 @@ class Decoder(nn.Module):
             src = src.long()
             dst = dst.long()
             d_squared = torch.sum((generated_coords[src] - generated_coords[dst]) ** 2, dim=1)
-            # geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
-            geom_loss.append(torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
+            geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
+            # geom_loss.append(torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
         print("          [AR Distance Loss Step]", geom_loss)
         # if true_coords is not None:
         #     for a, b, c, d in zip (generated_coords_all, geom_loss, true_coords, dgl.unbatch(geometry_graphs)):

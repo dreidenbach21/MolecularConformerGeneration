@@ -55,9 +55,9 @@ class VAE_Delta(nn.Module):
             src = src.long()
             dst = dst.long()
             generated_coords = generated_mol.ndata['x_cc']
-            # d_squared = torch.sum((generated_coords[src] - generated_coords[dst]) ** 2, dim=1)
+            d_squared = torch.sum((generated_coords[src] - generated_coords[dst]) ** 2, dim=1)
             geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2)) #TODO: scaling hurt performance
-            geom_loss.append(torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
+            # geom_loss.append(torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
         print("[Distance Loss]", geom_loss)
         return torch.mean(torch.tensor(geom_loss))
 
@@ -131,6 +131,7 @@ class VAE_Delta(nn.Module):
 
     def std(self, input):
         return 1e-12 + torch.exp(input / 2)
+        #  return 1e-12 + F.softplus(input / 2)
 
     def align(self, source, target):
         # Rot, trans = rigid_transform_Kabsch_3D_torch(input.T, target.T)
@@ -305,8 +306,8 @@ class Encoder(nn.Module):
 
     def reparameterize(self, mean, logvar, scale = 1.0):
         # scale = 0.3 # trying this
-        # sigma = 1e-12 + torch.exp(scale*logvar / 2)
-        sigma = 1e-12 + F.softplus(scale*logvar / 2)
+        sigma = 1e-12 + torch.exp(scale*logvar / 2)
+        # sigma = 1e-12 + F.softplus(scale*logvar / 2)
         eps = torch.randn_like(mean)
         # if torch.gt(mean + eps*sigma, 100).any() or  torch.lt(mean + eps*sigma, -100).any():
         #         ipdb.set_trace()
@@ -320,10 +321,10 @@ class Encoder(nn.Module):
         # loss = (reconstruction( MSE = negative log prob) + self.kl_beta * KL)
         # Dkl( P || Q) # i added the .sum()
         # ipdb.set_trace() #TODO look into softplus instead of exp
-        # p_std = 1e-12 + torch.exp(z_logvar / 2)
-        # q_std = 1e-12 + torch.exp(z_logvar_prior / 2)
-        p_std = 1e-12 + F.softplus(z_logvar / 2)
-        q_std = 1e-12 + F.softplus(z_logvar_prior / 2)
+        p_std = 1e-12 + torch.exp(z_logvar / 2)
+        q_std = 1e-12 + torch.exp(z_logvar_prior / 2)
+        # p_std = 1e-12 + F.softplus(z_logvar / 2)
+        # q_std = 1e-12 + F.softplus(z_logvar_prior / 2)
         q_mean = z_mean_prior
         p_mean = z_mean
         var_ratio = (p_std / q_std).pow(2).sum(-1)
@@ -541,10 +542,10 @@ class Decoder(nn.Module):
                     print("update with reference", atom_ids)
                     progress[batch_idx] += 1
             batch_idx += 1
-        lens = [sum([len(y) for y in x]) for x in ids]
+        # lens = [sum([len(y) for y in x]) for x in ids]
         # check = all([a-b.item() == 0 for a, b in zip(lens,progress)])
         # ipdb.set_trace()
-        assert(check)
+        # assert(check)
         return ids, progress
 
     def distance_loss(self, generated_coords_all, geometry_graphs, true_coords = None):
@@ -553,6 +554,8 @@ class Decoder(nn.Module):
             src, dst = geometry_graph.edges()
             src = src.long()
             dst = dst.long()
+            if len(src) == 0 or len(dst) == 0:
+                continue
             d_squared = torch.sum((generated_coords[src] - generated_coords[dst]) ** 2, dim=1)
             geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
             # geom_loss.append(torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
@@ -594,28 +597,6 @@ class Decoder(nn.Module):
             true = self.align(true, generated)
         loss = self.mse(true, generated)
         return loss
-
-    # def isolate_next_subgraph(self, final_molecule, id_batch, true_geo_batch):
-    #     molecules = dgl.unbatch(final_molecule)
-    #     geos = dgl.unbatch(true_geo_batch)
-    #     result = []
-    #     geo_result = []
-    #     # valid = []
-    #     # check = True
-    #     for idx, ids in enumerate(id_batch):
-    #         if ids is None:
-    #             # valid.append((idx, False))
-    #             # check = False
-    #             continue
-    #         # else:
-    #             # valid.append((idx, True))
-    #         fine = molecules[idx]
-    #         subg = dgl.node_subgraph(fine, ids)
-    #         result.append(subg)
-
-    #         subgeo = dgl.node_subgraph(geos[idx], ids)
-    #         geo_result.append(subgeo)
-    #     return dgl.batch(result).to(self.device), dgl.batch(geo_result).to(self.device) #valid, check
 
     def get_reference(self, subgraph, molecule, ref_ids):
         # references = []
@@ -660,7 +641,7 @@ class Decoder(nn.Module):
         final_molecule = rdkit_mol_graph
         frag_ids = self.sort_ids(cg_frag_ids, bfs_order)
         # print(frag_ids)
-        # frag_ids, progress = self.add_reference(frag_ids, ref_order, progress) #! Do not need reference when we do delta coordinates
+        frag_ids, progress = self.add_reference(frag_ids, ref_order, progress) #! Do not need reference when we do delta coordinates?
         # ipdb.set_trace()
         frag_batch = defaultdict(list) # keys will be time steps
        
@@ -690,8 +671,8 @@ class Decoder(nn.Module):
             id_batch = frag_batch[t]
             r_batch = ref_batch[t]
             # print("ID", id_batch)
-            if t == 1:
-                ipdb.set_trace()
+            # if t == 1:
+            #     ipdb.set_trace()
             latent, geo_latent = self.isolate_next_subgraph(final_molecule, id_batch, true_geo_batch)
             latent = self.get_reference(latent, final_molecule, r_batch)
             # ipdb.set_trace()

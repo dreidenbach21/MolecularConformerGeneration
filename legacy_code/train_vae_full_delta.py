@@ -131,8 +131,8 @@ if __name__ =="__main__":
   torch.autograd.set_detect_anomaly(True)
   # train_loss_log_name = "torsional_diffusion_test_geomol_1000_minpostclamp" + "_train"
   # val_loss_log_name = "torsional_diffusion_test_geomol2_1000_minpostclamp" + "_val"
-  train_loss_log_name = "n1_ref_test_dist_delta" + "_train"
-  val_loss_log_name = "n1_ref_test_dist_delta" + "_val"
+  train_loss_log_name = "n1_ref_test_dist_delta_ref" + "_train"
+  val_loss_log_name = "n1_ref_test_dist_delta_ref" + "_val"
   train_loss_log_total, val_loss_log_total = [], []
   for epoch in range(10000):
     print("\n\n\n\n\nEpoch", epoch)

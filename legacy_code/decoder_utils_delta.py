@@ -13,7 +13,7 @@ from logger import log
 from model_utils import *
 import ipdb
 
-class IEGMN_Bidirectional_Layer(nn.Module):
+class IEGMN_Bidirectional_Delta_Layer(nn.Module):
     def __init__(
             self,
             orig_invar_feats_dim_h, #orig_h_feats_dim,
@@ -51,7 +51,7 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             B_input_edge_feats_dim = None, #rec_input_edge_feats_dim,
     ):
 
-        super(IEGMN_Bidirectional_Layer, self).__init__()
+        super(IEGMN_Bidirectional_Delta_Layer, self).__init__()
         
         # self.fine_tune = fine_tune
         self.cross_msgs = cross_msgs
@@ -83,7 +83,7 @@ class IEGMN_Bidirectional_Layer(nn.Module):
         # EDGES
         A_edge_mlp_input_dim = (invar_feats_dim_h * 2) #+ edge_feats_dim #! removed the edge features
         if self.use_dist_in_layers:# and self.A_evolve: #TRUE and TRUE
-            A_edge_mlp_input_dim += len(self.all_sigmas_dist)
+            A_edge_mlp_input_dim += 2*len(self.all_sigmas_dist) # 2 is for the reference
         # if self.standard_norm_order: # TRUE
         self.A_edge_mlp = nn.Sequential(
             nn.Linear(A_edge_mlp_input_dim, self.out_feats_dim_h),
@@ -221,8 +221,12 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             x_rel_mag = edges.data['x_rel_cc'] ** 2
             x_rel_mag = torch.sum(x_rel_mag, dim=1, keepdim=True)
             x_rel_mag = torch.cat([torch.exp(-x_rel_mag / sigma) for sigma in self.all_sigmas_dist], dim=-1)
+
+            x_ref_mag = edges.data['x_rel_cc'] ** 2
+            x_ref_mag = torch.sum(x_ref_mag, dim=1, keepdim=True)
+            x_ref_mag = torch.cat([torch.exp(-x_ref_mag / sigma) for sigma in self.all_sigmas_dist], dim=-1)
             return {'msg_cc': self.A_edge_mlp(
-                torch.cat([edges.src['feat_cc'], edges.dst['feat_cc'], x_rel_mag], dim=1))} # edges.data['feat'], x_rel_mag], dim=1))} # operates with edge features in it and node features
+                torch.cat([edges.src['feat_cc'], edges.dst['feat_cc'], x_rel_mag, x_ref_mag], dim=1))}
         else:
             return {
                 'msg_cc': self.A_edge_mlp(torch.cat([edges.src['feat_cc'], edges.dst['feat_cc'], edges.data['feat']], dim=1))} #TODO: fix edge data what signal do we use?
@@ -254,10 +258,12 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             # ipdb.set_trace()
             A_graph.ndata['x_now_cc'] = coords_A
             A_graph.ndata['feat_cc'] = h_feats_A  # first time set here
+            reference_A = A_graph.ndata['reference_point']
             print("[DEC single] forward input Coords A", torch.min(coords_A).item(), torch.max(coords_A).item(), torch.norm(coords_A, 2).item())
 
             # if self.A_evolve:
             A_graph.apply_edges(fn.u_sub_v('x_now_cc', 'x_now_cc', 'x_rel_cc'))  # x_i - x_j
+            A_graph.apply_edges(fn.u_sub_v('x_now_cc', 'reference_point', 'x_rel_ref'))
 
             A_graph.apply_edges(self.apply_edges_A)  ## i->j edge:  [h_i h_j] phi^e edge_mlp
             # Equation 1 message passing to create 'msg'
@@ -274,7 +280,8 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             # if self.A_evolve:
             A_graph.update_all(self.update_x_moment_A, fn.mean('m_cc', 'x_update_cc')) # phi_x coord_mlp
             # Inspired by https://arxiv.org/pdf/2108.10521.pdf we use original X and not only graph.ndata['x_now']
-            x_evolved_A = self.x_connection_init * orig_coords_A + (1. - self.x_connection_init) * A_graph.ndata['x_now_cc'] + A_graph.ndata['x_update_cc']
+            x_evolved_A_delta = self.x_connection_init * (orig_coords_A-reference_A) + (1. - self.x_connection_init) * (A_graph.ndata['x_now_cc']-reference_A) + A_graph.ndata['x_update_cc']
+            x_evolved_A = reference_A + x_evolved_A_delta
             # else:
             #     x_evolved_A = coords_A
             print("   [DEC MPNN] X A", torch.min(x_evolved_A).item(), torch.max(x_evolved_A).item(), torch.norm(x_evolved_A, 2).item())
@@ -336,13 +343,15 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             return x_evolved_A, node_upd_A, None, None, trajectory, geom_loss
 
     def forward(self, A_graph, B_graph, coords_A, h_feats_A, original_A_node_features, orig_coords_A,
-                coords_B, h_feats_B, original_B_node_features, orig_coords_B, mask, geometry_graph_A = None, geometry_graph_B = None, mpnn_only = False):
+                coords_B, h_feats_B, original_B_node_features, orig_coords_B, mask,
+                geometry_graph_A = None, geometry_graph_B = None, mpnn_only = False):
         if mpnn_only or B_graph is None: return self.single_forward(A_graph, coords_A, h_feats_A, original_A_node_features, orig_coords_A, geometry_graph_A, mask)
         with A_graph.local_scope() and B_graph.local_scope():
             A_graph.ndata['x_now_cc'] = coords_A
             B_graph.ndata['x_now_cc'] = coords_B
             A_graph.ndata['feat_cc'] = h_feats_A  # first time set here
             B_graph.ndata['feat_cc'] = h_feats_B
+            reference_A = A_graph.ndata['reference_point']
             print("[DEC start] forward input Coords A", torch.min(coords_A).item(), torch.max(coords_A).item())
             print("[DEC start] forward input Coords B", torch.min(coords_B).item(), torch.max(coords_B).item())
             print("[DEC start] forward input feat A", torch.min(h_feats_A).item(), torch.max(h_feats_A).item())
@@ -350,6 +359,7 @@ class IEGMN_Bidirectional_Layer(nn.Module):
 
             # if self.A_evolve:
             A_graph.apply_edges(fn.u_sub_v('x_now_cc', 'x_now_cc', 'x_rel_cc'))  # x_i - x_j
+            A_graph.apply_edges(fn.u_sub_v('x_now_cc', 'reference_point', 'x_rel_ref'))
             # if self.B_evolve:
             B_graph.apply_edges(fn.u_sub_v('x_now_cc', 'x_now_cc', 'x_rel_cc'))
 
@@ -375,7 +385,9 @@ class IEGMN_Bidirectional_Layer(nn.Module):
             # if self.A_evolve:
             A_graph.update_all(self.update_x_moment_A, fn.mean('m_cc', 'x_update_cc')) # phi_x coord_mlp
             # Inspired by https://arxiv.org/pdf/2108.10521.pdf we use original X and not only graph.ndata['x_now']
-            x_evolved_A = self.x_connection_init * orig_coords_A + (1. - self.x_connection_init) * A_graph.ndata['x_now_cc'] + A_graph.ndata['x_update_cc']
+            # x_evolved_A = self.x_connection_init * orig_coords_A + (1. - self.x_connection_init) * A_graph.ndata['x_now_cc'] + A_graph.ndata['x_update_cc']
+            x_evolved_A_delta = self.x_connection_init * (orig_coords_A-reference_A) + (1. - self.x_connection_init) * (A_graph.ndata['x_now_cc']-reference_A) + A_graph.ndata['x_update_cc']
+            x_evolved_A = reference_A + x_evolved_A_delta
             # if self.B_evolve:
             B_graph.update_all(self.update_x_moment_B, fn.mean('m_cc', 'x_update_cc'))
             print("            [DEC MPNN] orig B ", torch.min(orig_coords_B).item(), torch.max(orig_coords_B).item(), torch.norm(orig_coords_B, 2).item())
@@ -485,7 +497,7 @@ class IEGMN_Bidirectional_Layer(nn.Module):
         return "Decoder IEGMN Custom Layer " + str(self.__dict__)
 
 
-class IEGMN_Bidirectional(nn.Module):
+class IEGMN_Bidirectional_Delta(nn.Module):
     # def __init__(self, n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
     #              use_edge_features_in_gmn, use_mean_node_features, atom_emb_dim, iegmn_lay_hid_dim, num_att_heads,
     #              dropout, nonlin, leakyrelu_neg_slope, random_vec_dim=0, random_vec_std=1, use_scalar_features=True,
@@ -504,7 +516,7 @@ class IEGMN_Bidirectional(nn.Module):
                  use_edge_features_in_gmn, use_mean_node_features, atom_emb_dim, latent_dim, coord_F_dim,
                  dropout, nonlin, leakyrelu_neg_slope, random_vec_dim=0, random_vec_std=1, use_scalar_features=True,
                  num_A_feats=None, save_trajectories=False, weight_sharing = True, conditional_mask=False, **kwargs):
-        super(IEGMN_Bidirectional, self).__init__()
+        super(IEGMN_Bidirectional_Delta, self).__init__()
         self.debug = debug
         self.cross_msgs = cross_msgs
         self.device = device
@@ -544,7 +556,7 @@ class IEGMN_Bidirectional(nn.Module):
         self.iegmn_layers = nn.ModuleList()
         # Create First Layer
         self.iegmn_layers.append(
-            IEGMN_Bidirectional_Layer(orig_invar_feats_dim_h=input_node_feats_dim,
+            IEGMN_Bidirectional_Delta_Layer(orig_invar_feats_dim_h=input_node_feats_dim,
                         invar_feats_dim_h= latent_dim , #TODO we start at D here input_node_feats_dim,
                         out_feats_dim_h=latent_dim,
                         nonlin=nonlin,
@@ -558,7 +570,7 @@ class IEGMN_Bidirectional(nn.Module):
 
         # Create N - 1 layers
         if shared_layers:
-            interm_lay = IEGMN_Bidirectional_Layer(orig_invar_feats_dim_h=input_node_feats_dim,
+            interm_lay = IEGMN_Bidirectional_Delta_Layer(orig_invar_feats_dim_h=input_node_feats_dim,
                                      invar_feats_dim_h=latent_dim,
                                      out_feats_dim_h=latent_dim,
                                      cross_msgs=self.cross_msgs,
@@ -575,7 +587,7 @@ class IEGMN_Bidirectional(nn.Module):
             for layer_idx in range(1, n_lays):
                 debug_this_layer = debug if n_lays - 1 == layer_idx else False
                 self.iegmn_layers.append(
-                    IEGMN_Bidirectional_Layer(orig_invar_feats_dim_h=input_node_feats_dim,
+                    IEGMN_Bidirectional_Delta_Layer(orig_invar_feats_dim_h=input_node_feats_dim,
                                 invar_feats_dim_h=latent_dim,
                                 out_feats_dim_h=latent_dim,
                                 cross_msgs=self.cross_msgs,
@@ -701,29 +713,7 @@ class IEGMN_Bidirectional(nn.Module):
                                 geometry_graph_B=geometry_graph_B,
                                 mpnn_only=mpnn_only
                                 )
-            # #! Trying teacher forcing at each layer
-            # coords_A, \
-            # h_feats_A, \
-            # cat, \
-            # dog, trajectory, geom_loss = layer(A_graph=A_graph,
-            #                     B_graph=B_graph,
-            #                     coords_A=coords_A,
-            #                     h_feats_A=h_feats_A,
-            #                     original_A_node_features=original_A_node_features,
-            #                     orig_coords_A=orig_coords_A,
-            #                     coords_B=coords_B,
-            #                     h_feats_B=h_feats_B,
-            #                     original_B_node_features=original_B_node_features,
-            #                     orig_coords_B=orig_coords_B,
-            #                     mask=mask,
-            #                     geometry_graph_A=geometry_graph_A,
-            #                     geometry_graph_B=geometry_graph_B,
-            #                     mpnn_only=mpnn_only
-            #                     )
             print("[Decoder MPNN] geom loss of IEGMN layer", geom_loss.item())
-            if geom_loss.item() > 1e10:
-                # ipdb.set_trace()
-                print("Distance blow up")
             geom_losses = geom_losses + geom_loss
             full_trajectory.extend(trajectory)
         return coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory

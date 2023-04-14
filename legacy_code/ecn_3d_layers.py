@@ -314,7 +314,7 @@ class Pooling_3D_Layer(nn.Module):
             trajectory = []
             # Done: Set up the following regularization for CG only
             if self.save_trajectories: trajectory.append(x_evolved_A.detach().cpu()[-N,:])
-            if self.loss_geometry_regularization:
+            if False and self.loss_geometry_regularization:
                 x_evolved_A_coarse = x_evolved_A[-N:,:]
                 src, dst = geometry_graph_A.edges()
                 src = src.long()
@@ -330,7 +330,7 @@ class Pooling_3D_Layer(nn.Module):
                 geom_loss += torch.sum((d_squared - geometry_graph_B.edata['feat'] ** 2) ** 2)
             else:
                 geom_loss = 0
-            if self.geometry_regularization:
+            if False and self.geometry_regularization:
                 x_evolved_A_coarse = x_evolved_A[-N:,:]
                 src, dst = geometry_graph_A.edges()
                 src = src.long()
@@ -761,6 +761,10 @@ class Coarse_Grain_3DLayer(nn.Module):
             v_evolved_B = self.skip_weight_v * self.B_vn_mlp_4(v_evolved_A_input) + (1. - self.skip_weight_v) * v_B
             print("[Encoder Coarse] ecn output V A", torch.min(v_evolved_A).item(), torch.max(v_evolved_A).item())
             print("[Encoder Coarse] ecn output V B", torch.min(v_evolved_B).item(), torch.max(v_evolved_B).item())
+            if torch.isnan(v_evolved_A).any().item():
+                print("Encoder NaN")
+                ipdb.set_trace()
+                nans_here = self.A_vn_mlp_4(v_evolved_A_input)
             return v_evolved_A, h_A, v_evolved_B, h_B
     #         # Equation 3: coordinate update
     #         A_graph.update_all(self.update_x_moment_A, fn.mean('m', 'x_update')) # phi_x coord_mlp
