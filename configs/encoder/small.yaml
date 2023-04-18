@@ -26,6 +26,10 @@ x_connection_init: 0.25 # 0.25 in good run
 random_vec_dim: 0 # set to 0 to have no stochasticity
 random_vec_std: 1
 use_scalar_features: False # Have a look at lig_feature_dims in process_mols.py to see what features we are talking about.
-num_A_feats: None # leave as None to use all ligand features. Have a look at lig_feature_dims in process_mols.py to see what features we are talking about. If this is 1, only the first of those will be used.
+# num_A_feats: None # leave as None to use all ligand features. Have a look at lig_feature_dims in process_mols.py to see what features we are talking about. If this is 1, only the first of those will be used.
 normalize_coordinate_update: True
 weight_sharing: False
+device: 'cuda'
+
+# CG Layer Specific
+skip_weight_v: 0.9

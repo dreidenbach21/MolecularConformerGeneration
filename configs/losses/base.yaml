@@ -6,8 +6,10 @@ ar_mse_weight: 1
 aligned_global_distance: True
 distance_weight: 1
 aligned_ar_distance: True
-ar_distance_weight: 1
+ar_distance_weight: 0.3
 
 ar_loss_bottom_up: True
 
 kl_weight: 1
+x_cc_weight: 0
+h_cc_weight: 0

@@ -12,7 +12,7 @@ coordinates: absolute # or delta
 hydra:
   job:
     env_set: 
-      CUDA_VISIBLE_DEVICES: 6
+      CUDA_VISIBLE_DEVICES: 5
   run:
     dir: outputs/${wandb.name}_${now:%Y-%m-%d_%H-%M-%S}
   job_logging:
@@ -33,5 +33,5 @@ hydra:
 
 wandb:
   project: MCG
-  name: test2
-  notes: This is a wandb hydra test
+  name: aligned_backwards_test
+  notes: Instead of taking a look at each independent subgraph as it is being generated and taking an aligned loss on that, I am focussing on aligning what has been built up so far and masking out the prev to prevent over focus.
