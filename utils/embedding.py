@@ -276,8 +276,9 @@ def get_lig_structure_graph(lig):
 
 def get_geometry_graph(lig): # 2 Hop Distances
     coords = lig.GetConformer().GetPositions()
-    coords -= np.mean(coords, axis = 0)
     print("Make Geo", coords)
+    coords -= np.mean(coords, axis = 0)
+    print("Make Geo remove mean", coords)
     edges_src = []
     edges_dst = []
     for i, atom in enumerate(lig.GetAtoms()):

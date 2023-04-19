@@ -1,13 +1,13 @@
 # my_config.yaml
 defaults:
-  - encoder: small
-  - decoder: small
+  - encoder: small #medium #small
+  - decoder: small #medium #small
   - vae: base
   - optimizer: base
   - losses: base
   - data: base
 
-coordinates: absolute # or delta
+coordinates: delta #absolute # or delta or double?
 
 hydra:
   job:
@@ -33,5 +33,5 @@ hydra:
 
 wandb:
   project: MCG
-  name: aligned_backwards_test
-  notes: Instead of taking a look at each independent subgraph as it is being generated and taking an aligned loss on that, I am focussing on aligning what has been built up so far and masking out the prev to prevent over focus.
+  name: delta_global_kl
+  notes: adding KL back to loss

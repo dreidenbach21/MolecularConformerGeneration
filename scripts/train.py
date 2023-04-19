@@ -24,8 +24,8 @@ def load_data(cfg):
     # with open(geom_path + "qm9_safe_v2.pickle", 'rb') as f:
     #     qm9 = pickle.load(f)
     train_loader, train_data = load_torsional_data(batch_size=cfg['train_batch_size'], mode='train', limit_mols=cfg['train_data_limit'])
-    # val_loader, val_data = load_torsional_data(batch_size=cfg['val_batch_size'], mode='val', limit_mols=cfg['val_data_limit'])
-    val_loader, val_data = None, None
+    val_loader, val_data = load_torsional_data(batch_size=cfg['val_batch_size'], mode='val', limit_mols=cfg['val_data_limit'])
+    # val_loader, val_data = None, None
     print("Loading QM9 --> Done")
     return train_loader, train_data, val_loader, val_data
 
@@ -46,7 +46,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     train_loader, train_data, val_loader, val_data = load_data(cfg.data)
     F = cfg.encoder["coord_F_dim"]
     D = cfg.encoder["latent_dim"]
-    model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, device = "cuda").cuda()
+    model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, coordinate_type, device = "cuda").cuda()
     
     print("CUDA CHECK", next(model.parameters()).is_cuda)
     print("# of Encoder Params = ", sum(p.numel()
@@ -81,11 +81,11 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
             B_graph, geo_B, Bp, B_cg, geo_B_cg = B_graph.to('cuda:0'), geo_B.to(
                 'cuda:0'), Bp.to('cuda:0'), B_cg.to('cuda:0'), geo_B_cg.to('cuda:0')
 
-            generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out = model(
+            generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss = model(
                 frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg, epoch=epoch)
         # ipdb.set_trace()
-            loss, losses = model.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, step=epoch)
-            train_loss_log.append(losses)
+            loss, losses = model.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, AR_loss, step=epoch)
+            # train_loss_log.append(losses)
             print(f"Train LOSS = {loss}")
             loss.backward()
             losses['Train Loss'] = loss.cpu()
@@ -110,33 +110,34 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
             optim.step()
             optim.zero_grad()
 
-        train_loss_log_total.append(train_loss_log)
-        # TODO wandb log epoch stats
-    with open(f'./logs/{train_loss_log_name}.pkl', 'wb') as f:
-        pickle.dump(train_loss_log_total, f)
+        # train_loss_log_total.append(train_loss_log)
 
-    # ! Implement Validation TODO
-    # print("\n\n\n\n\n Validation")
-    # with torch.no_grad():
-    #   model.flip_teacher_forcing()
-    #   for A_batch, B_batch in val_loader:
-    #     A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
-    #     B_graph, geo_B, Bp, B_cg, geo_B_cg = B_batch
+    # with open(f'./logs/{train_loss_log_name}.pkl', 'wb') as f:
+    #     pickle.dump(train_loss_log_total, f)
 
-    #     A_graph, geo_A, Ap, A_cg, geo_A_cg = A_graph.to('cuda:0'), geo_A.to('cuda:0'), Ap.to('cuda:0'), A_cg.to('cuda:0'), geo_A_cg.to('cuda:0')
-    #     B_graph, geo_B, Bp, B_cg, geo_B_cg = B_graph.to('cuda:0'), geo_B.to('cuda:0'), Bp.to('cuda:0'), B_cg.to('cuda:0'), geo_B_cg.to('cuda:0')
+        print("\n\n\n\n\n Validation")
+        with torch.no_grad():
+        #   model.flip_teacher_forcing()
+            for A_batch, B_batch in val_loader:
+                A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
+                B_graph, geo_B, Bp, B_cg, geo_B_cg = B_batch
 
-    #     generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out = model(frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg, epoch=epoch)
-    #   # ipdb.set_trace()
-    #     loss, losses = model.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, step = epoch)
-    #     val_loss_log.append(losses)
-    #     print(f"Val LOSS = {loss}")
+                A_graph, geo_A, Ap, A_cg, geo_A_cg = A_graph.to('cuda:0'), geo_A.to('cuda:0'), Ap.to('cuda:0'), A_cg.to('cuda:0'), geo_A_cg.to('cuda:0')
+                B_graph, geo_B, Bp, B_cg, geo_B_cg = B_graph.to('cuda:0'), geo_B.to('cuda:0'), Bp.to('cuda:0'), B_cg.to('cuda:0'), geo_B_cg.to('cuda:0')
+
+                generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss = model(
+                        frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg, epoch=epoch)
+                # ipdb.set_trace()
+                loss, losses = model.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, AR_loss, step=epoch)
+                # train_loss_log.append(losses)
+                losses['Val Loss'] = loss.cpu()
+                wandb.log({'val_' + key: value for key, value in losses.items()})
+                print(f"Val LOSS = {loss}")
     #   val_loss_log_total.append(val_loss_log)
     #   model.flip_teacher_forcing()
     #   with open(f'./logs/{val_loss_log_name}.pkl', 'wb') as f:
     #     pickle.dump(val_loss_log_total, f)
 
-    # frag_ids, A_batch, B_batch, geoA_batch, geoB_batch, Ap_batch, Bp_batch, Acg_batch, Bcg_batch, geoAcg_batch, geoBcg_batch = dummy_data_loader()
     print("Training Complete")
     # with open(f'./logs/{train_loss_log_name}.pkl', 'wb') as f:
     #     pickle.dump(train_loss_log_total, f)

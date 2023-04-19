@@ -1,6 +1,7 @@
 from utils.equivariant_model_utils import *
 from utils.geometry_utils import *
 from decoder_layers import IEGMN_Bidirectional
+from decoder_delta_layers import IEGMN_Bidirectional_Delta
 from collections import defaultdict
 import numpy as np
 import copy
@@ -12,21 +13,27 @@ from utils.neko_fixed_attention import neko_MultiheadAttention
 import ipdb
 
 class Decoder(nn.Module):
-    def __init__(self, atom_embedder, n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
+    def __init__(self, atom_embedder, coordinate_type, n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
                  use_edge_features_in_gmn, use_mean_node_features, atom_emb_dim, latent_dim, coord_F_dim,
                  dropout, nonlin, leakyrelu_neg_slope, random_vec_dim=0, random_vec_std=1, use_scalar_features=True,
                  num_A_feats=None, save_trajectories=False, weight_sharing = True, conditional_mask=False, **kwargs):
         super(Decoder, self).__init__()
         # self.mha = torch.nn.MultiheadAttention(embed_dim = 3, num_heads = 1, batch_first = True)
         self.mha = neko_MultiheadAttention(embed_dim = 3, num_heads = 1, batch_first = True)
-        self.iegmn = IEGMN_Bidirectional(n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
+        if coordinate_type == "delta":
+            self.iegmn = IEGMN_Bidirectional_Delta(n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
                  use_edge_features_in_gmn, use_mean_node_features, atom_emb_dim, latent_dim, coord_F_dim,
                  dropout, nonlin, leakyrelu_neg_slope, random_vec_dim, random_vec_std, use_scalar_features,
                  save_trajectories, weight_sharing, conditional_mask, **kwargs).cuda() #iegmn
+        else:
+            self.iegmn = IEGMN_Bidirectional(n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
+                    use_edge_features_in_gmn, use_mean_node_features, atom_emb_dim, latent_dim, coord_F_dim,
+                    dropout, nonlin, leakyrelu_neg_slope, random_vec_dim, random_vec_std, use_scalar_features,
+                    save_trajectories, weight_sharing, conditional_mask, **kwargs).cuda() #iegmn
         self.atom_embedder = atom_embedder # taken from the FG encoder
         D, F = latent_dim, coord_F_dim
         self.h_channel_selection = Scalar_MLP(D, 2*D, D)
-        self.mse = nn.MSELoss()
+        # self.mse = nn.MSELoss()
         # norm = "ln"
         if kwargs['cc_norm'] == "bn":
             self.eq_norm = VNBatchNorm(F)
@@ -49,6 +56,7 @@ class Decoder(nn.Module):
         self.feed_forward_V_3 = nn.Sequential(VNLinear(3, F), VN_MLP(F, 3, 3, 3, leaky = False, use_batchnorm = False))
         self.feed_forward_h_3 = Scalar_MLP(D, 2*D, D)
         self.teacher_forcing = kwargs['teacher_forcing']
+        self.mse_none = nn.MSELoss(reduction ='none')
     
     def get_node_mask(self, ligand_batch_num_nodes, receptor_batch_num_nodes, device):
         rows = ligand_batch_num_nodes.sum()
@@ -237,9 +245,9 @@ class Decoder(nn.Module):
             src = src.long()
             dst = dst.long()
             d_squared = torch.sum((generated_coords[src] - generated_coords[dst]) ** 2, dim=1)
-            geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
+            geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2).unsqueeze(0))
             # geom_loss.append(torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
-        print("          [AR Distance Loss Step]", geom_loss)
+        # print("          [AR Distance Loss Step]", geom_loss)
         # if true_coords is not None:
         #     for a, b, c, d in zip (generated_coords_all, geom_loss, true_coords, dgl.unbatch(geometry_graphs)):
         #         print("          Aligned MSE", a.shape, self.rmsd(a, c, align = True))
@@ -247,7 +255,7 @@ class Decoder(nn.Module):
         #         print("          True", c)
         #         print("          distance", b)
         #         print("          edges", d.edges())
-        return torch.mean(torch.tensor(geom_loss))
+        return torch.mean(torch.cat(geom_loss))
 
     def align(self, source, target):
         # Rot, trans = rigid_transform_Kabsch_3D_torch(input.T, target.T)
@@ -272,12 +280,45 @@ class Decoder(nn.Module):
         return (rotation @ lig_coords.t()).t() + translation
         # return lig_coords
     
-    def rmsd(self, generated, true, align = False):
+    def mse(self, generated, true, align = False):
         if align:
             true = self.align(true, generated)
-        loss = self.mse(true, generated)
+        loss = self.mse_none(true, generated)
         return loss
 
+    def ar_loss_step(self, coords, coords_ref, chunks, condition_coords, condition_coords_ref, chunk_condition, align = False):#, step = 1, first_step = 1):
+        loss = []
+        start = 0
+        bottom_up = True #self.loss_params['ar_loss_bottom_up']
+        if condition_coords is not None and bottom_up:
+            start_A, start_B = 0, 0
+            for chunk_A, chunk_B in zip(chunks, chunk_condition):
+                A, A_true = coords[start_A: start_A + chunk_A, :], coords_ref[start_A:start_A+chunk_A, :]
+                B, B_true = condition_coords[start_B: start_B + chunk_B, :], condition_coords_ref[start_B:start_B+chunk_B, :]
+                if A.shape[0] == 2: # when we force reference we can remove the reference form B since its in A
+                    b_rows = B.shape[0]
+                    common_rows = torch.all(torch.eq(B_true[:, None, :], A_true[None, :, :]), dim=-1).any(dim=-1)
+                    B, B_true = B[~common_rows], B_true[~common_rows]
+                    assert(B.shape[0] == B_true.shape[0] and (B.shape[0] == b_rows - 1 or B.shape[0] == b_rows))
+                AB = torch.cat([A, B], dim = 0)
+                AB_true = torch.cat([A_true, B_true], dim = 0)
+                unmasked_loss = self.mse(AB, AB_true, align)
+                mask = torch.cat([torch.ones_like(A), torch.zeros_like(B)], dim=0)
+                masked_loss = torch.masked_select(unmasked_loss, mask.bool()).sum() 
+                loss.append(masked_loss)
+                start_A += chunk_A
+                start_B += chunk_B
+                print("       unnormalized AR loss and A shape, B shape", masked_loss.cpu().item(), A.shape, B.shape)
+        else:
+            for chunk in chunks:
+                sub_loss = self.mse(coords[start: start + chunk, :], coords_ref[start:start+chunk, :], align).sum()
+                print("      unnormalized AR first step loss ", sub_loss.cpu().item(), coords[start: start + chunk, :].shape)
+                if coords[start: start + chunk, :].shape[0] == 1 or sub_loss.cpu().item()>3:
+                    print("       ", coords[start: start + chunk, :], coords_ref[start: start + chunk, :])
+                loss.append(sub_loss)
+                start += chunk
+        return loss
+    
     def forward(self, cg_mol_graph, rdkit_mol_graph, cg_frag_ids, true_geo_batch):
         # ipdb.set_trace()
         rdkit_reference = copy.deepcopy(rdkit_mol_graph)
@@ -298,6 +339,7 @@ class Decoder(nn.Module):
             start += i
         # ipdb.set_trace()
         progress = rdkit_mol_graph.batch_num_nodes().cpu()
+        total_num_atoms = rdkit_mol_graph.batch_num_nodes().cpu()
         # print("progress", progress)
         final_molecule = rdkit_mol_graph
         frag_ids = self.sort_ids(cg_frag_ids, bfs_order)
@@ -305,9 +347,6 @@ class Decoder(nn.Module):
         frag_ids, progress = self.add_reference(frag_ids, ref_order, progress) #done
         # ipdb.set_trace()
         frag_batch = defaultdict(list) # keys will be time steps
-        # TODO: build similar object for reference atoms as they are already in BFS order
-        # TODO: does this work or do we need to sort them like hte BFS
-        # TODO: print out what the references look like adn the frag ids after sorting to make sure they line up and look realistic
         max_nodes = max(cg_mol_graph.batch_num_nodes()).item()
         for t in range(max_nodes):
             for idx, frag in enumerate(frag_ids): # iterate over moelcules
@@ -321,6 +360,9 @@ class Decoder(nn.Module):
         current_molecule = None
         geo_current = None
         returns = []
+        
+        losses = [[] for _ in range(len(progress))]#torch.zeros_like(progress)
+        loss_idx = list(range(len(progress)))
         for t in range(max_nodes):
             # ipdb.set_trace()
             print("[Auto Regressive Step]")
@@ -337,20 +379,22 @@ class Decoder(nn.Module):
             model_predicted_B = current_molecule.ndata['x_cc'] if current_molecule is not None else None
             model_predicted_B_split = [x.ndata['x_cc'] for x in dgl.unbatch(current_molecule)] if current_molecule is not None else None
             gen_input = latent.ndata['x_cc']
-            print("[AR step end] geom losses total from decoder", t, geom_losses)
+            # print("[AR step end] geom losses total from decoder", t, geom_losses)
             dist_loss = self.distance_loss([x.ndata['x_cc'] for x in dgl.unbatch(latent)], geo_latent, [x.ndata['x_true'] for x in dgl.unbatch(latent)])
             print()
             returns.append((coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory, id_batch, ref_coords_A, ref_coords_B, ref_coords_B_split, gen_input, model_predicted_B, model_predicted_B_split, dist_loss))
             # print("ID Check", returns[0][6])
-            # print(f'{t} A MSE = {torch.mean(torch.sum(ref_coords_A - coords_A, dim = 1)**2)}')
-            # if ref_coords_B is not None:
-            # if torch.gt(coords_A, 1000).any() or  torch.lt(coords_A, -1000).any() or (coords_B is not None and torch.gt(coords_B, 1000).any()) or (coords_B is not None and torch.lt(coords_B, -1000).any()):
-            #     # ipdb.set_trace()
-            #     print("Caught Explosion in Decode step")
                 # X_cc, H_cc = self.channel_selection(cg_mol_graph, rdkit_mol_graph, cg_frag_ids)
                 # coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory = self.autoregressive_step(latent, current_molecule, t, geo_latent, geo_current)
 
                 # print(f'{t} B MSE = {torch.mean(torch.sum(ref_coords_B - coords_B, dim = 1)**2)}')
+            num_molecule_chunks = [len(x) for x in id_batch if x is not None]
+            loss_idx_t = [x for i, x in enumerate(loss_idx) if id_batch[i] is not None]
+            num_molecule_chunks_condition = [x.shape[0] for x in ref_coords_B_split] if current_molecule is not None else None
+            ar_losses = self.ar_loss_step(coords_A, ref_coords_A, num_molecule_chunks, model_predicted_B, ref_coords_B, num_molecule_chunks_condition, True)
+            for idx, ar_loss in zip(loss_idx_t, ar_losses):
+                losses[idx].append(ar_loss) #+= ar_loss
+                
             self.update_molecule(final_molecule, id_batch, coords_A, h_feats_A, latent)
             progress -= torch.tensor([len(x) if x is not None else 0 for x in id_batch])
             if t == 0:
@@ -363,6 +407,9 @@ class Decoder(nn.Module):
                     current_molecule_ids[idx].extend(ids)
             # ipdb.set_trace() # erroring on dgl.unbatch(final_molecule) for some odd reason --> fixed by adding an else above
             current_molecule, geo_current = self.gather_current_molecule(final_molecule, current_molecule_ids, progress, true_geo_batch)
-
-        return final_molecule, rdkit_reference, returns, (X_cc, H_cc)
+        # ipdb.set_trace()
+        for idx, natoms in enumerate(total_num_atoms):
+            losses[idx] = (sum(losses[idx])/natoms).unsqueeze(0)
+            print("[Final AR Loss]", natoms, losses[idx])
+        return final_molecule, rdkit_reference, returns, (X_cc, H_cc), torch.cat(losses).mean()
 

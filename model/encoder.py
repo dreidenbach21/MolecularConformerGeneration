@@ -183,8 +183,15 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
                                 weight_sharing = self.weight_sharing, **kwargs))
 
     def forward(self, A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool,
-                  A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch, single = False):
-            
+                  A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch, prior_only = False):
+        
+        if prior_only: #! Quick fix to only pass in B and discard the A
+             A_graph = B_graph
+             geometry_graph_A = geometry_graph_B
+             A_pool = B_pool
+             A_cg = B_cg
+             geometry_graph_A_cg = geometry_graph_B_cg
+             
         orig_coords_A = A_graph.ndata['x']
         orig_coords_B = B_graph.ndata['x']
         orig_coords_A_pool = A_pool.ndata['x']
@@ -305,6 +312,9 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
             full_trajectory.extend(trajectory)
             full_trajectory_cg.extend(trajectory_cg)
         # return (coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory), (coords_A_cg, h_feats_A_cg, coords_B_cg, h_feats_B_cg, geom_losses_cg, full_trajectory_cg)
+        if prior_only:
+            return None, (v_B_cg, h_feats_B_cg), None, None, None, None
+
         return (v_A_cg, h_feats_A_cg), (v_B_cg, h_feats_B_cg), geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg
 
     def __repr__(self):
