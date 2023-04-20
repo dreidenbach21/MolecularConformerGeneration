@@ -69,8 +69,18 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     train_loss_log_name = NAME + "_train"
     val_loss_log_name =  NAME + "_val"
     train_loss_log_total, val_loss_log_total = [], []
+    
+    kl_annealing = False #True
+    kl_weight = 1e-6
+    kl_annealing_rate = 0.5
+    kl_annealing_interval = 250
     for epoch in range(cfg.data['epochs']):
         print("\n\n\n\n\nEpoch", epoch)
+        if kl_annealing and epoch > 0 and epoch % kl_annealing_interval == 0:
+            kl_weight += kl_annealing_rate
+            kl_weight = min(kl_weight, 1)
+        if kl_annealing:
+            model.kl_v_beta = kl_weight
         train_loss_log, val_loss_log = [], []
         for A_batch, B_batch in train_loader:
             A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch

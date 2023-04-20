@@ -121,7 +121,7 @@ class VAE(nn.Module):
         # loss += l2_loss
         # ipdb.set_trace()
         rdkit_loss = [self.rmsd(m.ndata['x_ref'], m.ndata['x_true'], align = True).unsqueeze(0) for m in dgl.unbatch(rdkit_reference)]
-        rdkit_loss = torch.cat(rdkit_loss).mean()
+        rdkit_loss = self.lambda_global_mse*torch.cat(rdkit_loss).mean()
         # TODO no longer need to pre calculate
         # rdkit_loss2 = torch.mean(torch.cat([x.ndata['rdkit_loss'][0].unsqueeze(0) for x in dgl.unbatch(rdkit_reference)])) # mean instead of sum over batch
         # assert(rdkit_loss.cpu().item() == rdkit_loss2.cpu().item())
@@ -145,6 +145,8 @@ class VAE(nn.Module):
             'L2 Norm Squared Prior LogV': l2_vp.cpu(),
             'L2 Norm Squared Prior Mean': l2_vp2.cpu(),
             'L2 Norm Squared (Posterior - Prior) Mean': l2_d.cpu(),
+            'unscaled kl': kl_v.cpu(),
+            'unscaled unclamped kl': kl_v_unclamped.cpu()
         }
         return loss, loss_results #(ar_mse.cpu(), final_align_rmsd.cpu(), kl_loss.cpu(), x_cc_loss.cpu(), h_cc_loss.cpu(),l2_v.cpu(), l2_v2.cpu(), l2_vp.cpu(), l2_vp2.cpu(), l2_d.cpu(), rdkit_loss.cpu(), distance_loss.cpu(), ar_dist_loss.cpu())
 
@@ -332,6 +334,7 @@ class VAE(nn.Module):
     # https://github.com/NVIDIA/NeMo/blob/b9cf05cf76496b57867d39308028c60fef7cb1ba/nemo/collections/nlp/models/machine_translation/mt_enc_dec_bottleneck_model.py#L217
     def kl(self, z_mean, z_logvar, z_mean_prior, z_logvar_prior, natoms, nbeads, coordinates = False):
         assert len(natoms) == len(nbeads)
+        # ! Look into budget per molecule
         free_bits_per_dim = self.kl_free_bits/z_mean[0].numel()
         if self.kl_softplus:
             p_std = 1e-12 + F.softplus(z_logvar / 2)
