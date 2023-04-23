@@ -208,8 +208,8 @@ def featurize_mol(mol, types=drugs_types, use_rdkit_coords = False, seed = 0, ra
     graph.ndata['x_ref'] = torch.from_numpy(np.array(lig_coords).astype(np.float32))
     graph.ndata['x_true'] = torch.from_numpy(np.array(true_lig_coords).astype(np.float32))
     graph.ndata['mu_r_norm'] = torch.from_numpy(np.array(mean_norm_list).astype(np.float32))
-    if use_rdkit_coords:
-        graph.ndata['rdkit_loss'] = torch.from_numpy(np.array([loss_error]*node_features.shape[0]).astype(np.float32)).reshape(-1,1)
+    # if use_rdkit_coords:
+    #     graph.ndata['rdkit_loss'] = torch.from_numpy(np.array([loss_error]*node_features.shape[0]).astype(np.float32)).reshape(-1,1)
     return graph
 
 def mol_to_nx(mol):

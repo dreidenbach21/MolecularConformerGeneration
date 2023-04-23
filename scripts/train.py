@@ -70,15 +70,16 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     val_loss_log_name =  NAME + "_val"
     train_loss_log_total, val_loss_log_total = [], []
     
-    kl_annealing = False #True
+    kl_annealing = True
     kl_weight = 1e-6
-    kl_annealing_rate = 0.5
-    kl_annealing_interval = 250
+    kl_annealing_rate = 1e-5
+    kl_annealing_interval = 1
+    kl_cap = 1e-3
     for epoch in range(cfg.data['epochs']):
         print("\n\n\n\n\nEpoch", epoch)
         if kl_annealing and epoch > 0 and epoch % kl_annealing_interval == 0:
             kl_weight += kl_annealing_rate
-            kl_weight = min(kl_weight, 1)
+            kl_weight = min(kl_weight, kl_cap)
         if kl_annealing:
             model.kl_v_beta = kl_weight
         train_loss_log, val_loss_log = [], []

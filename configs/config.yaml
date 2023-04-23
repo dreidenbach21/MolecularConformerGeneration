@@ -33,5 +33,5 @@ hydra:
 
 wandb:
   project: MCG
-  name: delta_global_kl
-  notes: adding KL back to loss
+  name: delta_vae_anneal
+  notes: MSE + VAE annealing
