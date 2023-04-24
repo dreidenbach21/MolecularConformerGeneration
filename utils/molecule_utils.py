@@ -482,7 +482,7 @@ def get_rdkit_coords(mol, seed = None):
         try:
             AllChem.MMFFOptimizeMolecule(mol, confId=0)
         except:
-            print("RDKit cannot generate conformer for: ", Chem.MolToSmiles(mol))
+            # print("RDKit cannot generate conformer for: ", Chem.MolToSmiles(mol))
             return None
     else:
         AllChem.MMFFOptimizeMolecule(mol, confId=0)

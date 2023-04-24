@@ -5,11 +5,13 @@ from rdkit.Chem.rdchem import BondType as BT
 from rdkit.Chem.rdchem import ChiralType
 import networkx as nx
 
-import torch #, tqdm
+import torch#, tqdm
+import tqdm as tqdm_outer
 from tqdm import tqdm
 import torch.nn.functional as F
-from multiprocessing import Pool
+# from multiprocessing import Pool
 import torch.multiprocessing as mp
+# import dgl.multiprocessing as mp
 # import multiprocessing as mp
 #mp.set_start_method('spawn') # use 'spawn' method instead of 'fork'
 #mp.set_sharing_strategy('file_system')
@@ -25,6 +27,8 @@ from molecule_utils import *
 # from torch_geometric.data import Dataset, Data, DataLoader
 from dgl.data import DGLDataset
 from dgl.dataloading import DataLoader
+# import psutil
+import concurrent.futures
 
 dihedral_pattern = Chem.MolFromSmarts('[*]~[*]~[*]~[*]')
 chirality = {ChiralType.CHI_TETRAHEDRAL_CW: -1.,
@@ -338,18 +342,28 @@ class ConformerDataset(DGLDataset):
         print('Preparing to process', len(smiles), 'smiles')
         datapoints = []
         if num_workers > 1:
+            results = []
             with mp.Pool(num_workers) as pool:
-                 results = list(tqdm(pool.imap_unordered(self.filter_smiles_mp, smiles), total=len(smiles)))
-                #  results = [x for x in pool.imap_unordered(self.filter_smiles_mp, smiles)]
+                results = list(tqdm(pool.imap_unordered(self.filter_smiles_mp, smiles), total=len(smiles)))
             datapoints = [item for sublist in results for item in sublist if sublist[0] is not None]
+            
+            
+            # with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
+            #     future_results = [executor.submit(self.filter_smiles_mp, s) for s in smiles]
+
+            #     for future in tqdm(concurrent.futures.as_completed(future_results), total=len(future_results)):
+            #         result = future.result()
+            #         results.append(result)
+            # datapoints = [item for sublist in results for item in sublist if sublist[0] is not None]
+            
         else:
             if num_workers > 1:
                 p = Pool(num_workers)
                 p.__enter__()
-            with tqdm.tqdm(total=len(smiles)) as pbar:
+            with tqdm_outer.tqdm(total=len(smiles)) as pbar:
                 map_fn = p.imap if num_workers > 1 else map
-                for t in map_fn(self.filter_smiles, smiles):
-                    if t:
+                for t in map_fn(self.filter_smiles_mp, smiles):
+                    if t and t[0] is not None:
     #                     datapoints.append(t)
                         datapoints.extend(t)
                     pbar.update()
@@ -359,15 +373,9 @@ class ConformerDataset(DGLDataset):
         print(self.failures)
         if pickle_dir: del self.current_pickle
         return datapoints
-    
-    # def filter_wrapper(self, smile):
-    #     try :
-    #         return self.filter_smiles_mp(smile)
-    #     except Exception as e:
-    #         print("[Wrapper Failure]", e)
-    #         return [None]
-            
+        
     def filter_smiles_mp(self, smile):
+        # print(f'RAM Memory % used: {psutil.virtual_memory()[2]}')
         if type(smile) is tuple:
             pickle_id, smile = smile
             current_id, current_pickle = self.current_pickle
@@ -375,17 +383,20 @@ class ConformerDataset(DGLDataset):
                 path = osp.join(self.pickle_dir, str(pickle_id).zfill(3) + '.pickle')
                 if not osp.exists(path):
                     self.failures[f'std_pickle{pickle_id}_not_found'] += 1
+                    # print("A")
                     return [None]
                 with open(path, 'rb') as f:
                     self.current_pickle = current_id, current_pickle = pickle_id, pickle.load(f)
             if smile not in current_pickle:
                 self.failures['smile_not_in_std_pickle'] += 1
+                # print("B")
                 return [None]
             mol_dic = current_pickle[smile]
 
         else:
             if not os.path.exists(os.path.join(self.root, smile + '.pickle')):
                 self.failures['raw_pickle_not_found'] += 1
+                # print("C")
                 return [None]
             pickle_file = osp.join(self.root, smile + '.pickle')
             mol_dic = self.open_pickle(pickle_file)
@@ -394,12 +405,14 @@ class ConformerDataset(DGLDataset):
 
         if '.' in smile:
             self.failures['dot_in_smile'] += 1
+            # print("D")
             return [None]
 
         # filter mols rdkit can't intrinsically handle
         mol = Chem.MolFromSmiles(smile)
         if not mol:
             self.failures['mol_from_smiles_failed'] += 1
+            # print("E")
             return [None]
 
         mol = mol_dic['conformers'][0]['rd_mol']
@@ -409,20 +422,28 @@ class ConformerDataset(DGLDataset):
         N = mol.GetNumAtoms()
         if not mol.HasSubstructMatch(dihedral_pattern):
             self.failures['no_substruct_match'] += 1
+            # print("F")
             return [None]
 
         if N < 4:
             self.failures['mol_too_small'] += 1
+            # print("G")
             return [None]
         # print("A filter")
         datas = self.featurize_mol(mol_dic)
         if not datas or len(datas) == 0:
             self.failures['featurize_mol_failed'] += 1
+            # print("H")
             return [None]
         results_A = []
         results_B = []
         bad_idx_A, bad_idx_B = [], []
         for idx, data in enumerate(datas):
+            if not data:
+                self.failures['featurize_mol_failed_A'] += 1
+                bad_idx_A.append(idx)
+                results_A.append(None)
+                continue
             mol = mol_dic['conformers'][idx]['rd_mol']
             edge_mask, mask_rotate = get_transformation_mask(mol, data)
             if np.sum(edge_mask) < 0.5:
@@ -449,6 +470,11 @@ class ConformerDataset(DGLDataset):
             # rdmol_dic = copy.deepcopy(mol_dic)
         data_Bs = self.featurize_mol(mol_dic, use_rdkit_coords = True)
         for idx, data_B in enumerate(data_Bs):
+            if idx in set(bad_idx_A):
+                bad_idx_B.append(idx)
+                results_B.append(None)
+                continue
+              
             if not data_B:
                 self.failures['featurize_mol_failed_B'] += 1
                 bad_idx_B.append(idx)
@@ -472,12 +498,13 @@ class ConformerDataset(DGLDataset):
 #             return ((data, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids), (data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg))
             results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg))
         assert(len(results_A) == len(results_B))
-        bad_idx = set_of_all_elements = set(bad_idx_A) | set(bad_idx_B)
+        bad_idx = set(bad_idx_A) | set(bad_idx_B)
         results_A = [x for idx, x in enumerate(results_A) if idx not in bad_idx]
         results_B = [x for idx, x in enumerate(results_B) if idx not in bad_idx]
         assert(len(results_A) == len(results_B))
         if len(results_A) == 0 or len(results_B) == 0:
             # print("Bad Input")
+            # print("I")
             return [None]
         return [(a,b) for a,b in zip(results_A, results_B)]
 
@@ -583,8 +610,11 @@ class ConformerDataset(DGLDataset):
     #         data.mask_rotate = mask_rotate
 #             return ((data, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids), (data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg))
             results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg))
-        assert(len(results_A) == len(results_B))
-        bad_idx = set_of_all_elements = set(bad_idx_A) | set(bad_idx_B)
+        try:
+            assert(len(results_A) == len(results_B))
+        except:
+            import ipdb; ipdb.set_trace()
+        bad_idx = set(bad_idx_A) | set(bad_idx_B)
         results_A = [x for idx, x in enumerate(results_A) if idx not in bad_idx]
         results_B = [x for idx, x in enumerate(results_B) if idx not in bad_idx]
         assert(len(results_A) == len(results_B))
@@ -660,8 +690,6 @@ class ConformerDataset(DGLDataset):
 
         pos = []
         # weights = []
-#         if len(confs) > 1:
-#             import ipdb; ipdb.set_trace()
         datas = []
         for conf in confs:
             mol = conf['rd_mol']
@@ -674,6 +702,7 @@ class ConformerDataset(DGLDataset):
                 continue
 
             if conf_canonical_smi != canonical_smi:
+                datas.append(None)
                 continue
 
             pos.append(torch.tensor(mol.GetConformer().GetPositions(), dtype=torch.float))
