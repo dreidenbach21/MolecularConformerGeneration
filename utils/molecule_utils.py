@@ -255,9 +255,9 @@ def get_torsion_angles(mol):
         )
     return torsions_list
 
-def coarsen_molecule(m, use_diffusion = False):
+def coarsen_molecule(m, use_diffusion_angle_def = False):
     m = Chem.AddHs(m) #the GEOM dataset molecules have H's
-    if not use_diffusion:
+    if not use_diffusion_angle_def:
         torsions = get_torsions_geo([m])
     else:
         torsions = get_torsion_angles(m)

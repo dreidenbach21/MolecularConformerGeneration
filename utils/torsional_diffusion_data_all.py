@@ -5,11 +5,12 @@ from rdkit.Chem.rdchem import BondType as BT
 from rdkit.Chem.rdchem import ChiralType
 import networkx as nx
 
-import torch
+import torch #, tqdm
 from tqdm import tqdm
 import torch.nn.functional as F
 from multiprocessing import Pool
 import torch.multiprocessing as mp
+# import multiprocessing as mp
 #mp.set_start_method('spawn') # use 'spawn' method instead of 'fork'
 #mp.set_sharing_strategy('file_system')
 import glob, pickle, random
@@ -278,7 +279,7 @@ class ConformerDataset(DGLDataset):
     def __init__(self, root, split_path, mode, types, dataset, num_workers=1, limit_molecules=None,
                  cache_path=None, pickle_dir=None, boltzmann_resampler=None, raw_dir='/home/dannyreidenbach/data/dgl', save_dir='/home/dannyreidenbach/data/dgl',
                  force_reload=False, verbose=False, transform=None, name = "qm9",
-                 invariant_latent_dim = 64, equivariant_latent_dim = 32, use_diffusion = False):
+                 invariant_latent_dim = 64, equivariant_latent_dim = 32, use_diffusion_angle_def = False):
         # part of the featurisation and filtering code taken from GeoMol https://github.com/PattanaikL/GeoMol
 #         super(ConformerDataset, self).__init__(name, transform)
         self.D = invariant_latent_dim
@@ -289,7 +290,7 @@ class ConformerDataset(DGLDataset):
         self.dataset = dataset
         self.boltzmann_resampler = boltzmann_resampler
         self.cache_path = cache_path
-        self.use_diffusion = use_diffusion
+        self.use_diffusion_angle_def = use_diffusion_angle_def
         # print("Cache", cache_path)
         # if cache_path: cache_path += "." + mode
         self.split_path = split_path
@@ -325,7 +326,7 @@ class ConformerDataset(DGLDataset):
         smiles = smiles[split]
 
         self.open_pickles = {}
-        if pickle_dir:
+        if False and pickle_dir:
             smiles = [(i // mols_per_pickle, smi[len(root):-7]) for i, smi in zip(split, smiles)]
             if limit_molecules:
                 smiles = smiles[:limit_molecules]
@@ -338,8 +339,9 @@ class ConformerDataset(DGLDataset):
         datapoints = []
         if num_workers > 1:
             with mp.Pool(num_workers) as pool:
-                 results = list(tqdm(pool.imap(self.filter_smiles_mp, smiles), total=len(smiles)))
-            datapoints = [item for sublist in results for item in sublist]
+                 results = list(tqdm(pool.imap_unordered(self.filter_smiles_mp, smiles), total=len(smiles)))
+                #  results = [x for x in pool.imap_unordered(self.filter_smiles_mp, smiles)]
+            datapoints = [item for sublist in results for item in sublist if sublist[0] is not None]
         else:
             if num_workers > 1:
                 p = Pool(num_workers)
@@ -353,10 +355,18 @@ class ConformerDataset(DGLDataset):
                     pbar.update()
             if num_workers > 1: p.__exit__(None, None, None)
         print('Fetched', len(datapoints), 'mols successfully')
+        print('Example', datapoints[0])
         print(self.failures)
         if pickle_dir: del self.current_pickle
         return datapoints
     
+    # def filter_wrapper(self, smile):
+    #     try :
+    #         return self.filter_smiles_mp(smile)
+    #     except Exception as e:
+    #         print("[Wrapper Failure]", e)
+    #         return [None]
+            
     def filter_smiles_mp(self, smile):
         if type(smile) is tuple:
             pickle_id, smile = smile
@@ -365,18 +375,18 @@ class ConformerDataset(DGLDataset):
                 path = osp.join(self.pickle_dir, str(pickle_id).zfill(3) + '.pickle')
                 if not osp.exists(path):
                     self.failures[f'std_pickle{pickle_id}_not_found'] += 1
-                    return []
+                    return [None]
                 with open(path, 'rb') as f:
                     self.current_pickle = current_id, current_pickle = pickle_id, pickle.load(f)
             if smile not in current_pickle:
                 self.failures['smile_not_in_std_pickle'] += 1
-                return []
+                return [None]
             mol_dic = current_pickle[smile]
 
         else:
             if not os.path.exists(os.path.join(self.root, smile + '.pickle')):
                 self.failures['raw_pickle_not_found'] += 1
-                return []
+                return [None]
             pickle_file = osp.join(self.root, smile + '.pickle')
             mol_dic = self.open_pickle(pickle_file)
 
@@ -384,13 +394,13 @@ class ConformerDataset(DGLDataset):
 
         if '.' in smile:
             self.failures['dot_in_smile'] += 1
-            return []
+            return [None]
 
         # filter mols rdkit can't intrinsically handle
         mol = Chem.MolFromSmiles(smile)
         if not mol:
             self.failures['mol_from_smiles_failed'] += 1
-            return []
+            return [None]
 
         mol = mol_dic['conformers'][0]['rd_mol']
         
@@ -399,28 +409,31 @@ class ConformerDataset(DGLDataset):
         N = mol.GetNumAtoms()
         if not mol.HasSubstructMatch(dihedral_pattern):
             self.failures['no_substruct_match'] += 1
-            return []
+            return [None]
 
         if N < 4:
             self.failures['mol_too_small'] += 1
-            return []
+            return [None]
         # print("A filter")
         datas = self.featurize_mol(mol_dic)
         if not datas or len(datas) == 0:
             self.failures['featurize_mol_failed'] += 1
-            return []
+            return [None]
         results_A = []
         results_B = []
+        bad_idx_A, bad_idx_B = [], []
         for idx, data in enumerate(datas):
             mol = mol_dic['conformers'][idx]['rd_mol']
             edge_mask, mask_rotate = get_transformation_mask(mol, data)
             if np.sum(edge_mask) < 0.5:
                 self.failures['no_rotable_bonds'] += 1
-                return []
+                bad_idx_A.append(idx)
+                results_A.append(None)
+                continue
             # print("filter SMILE", smile)
-            A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion = self.use_diffusion)
+            A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
             A_cg = conditional_coarsen_3d(data, A_frag_ids, A_cg_map, A_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
-            xcc = mol.GetConformer().GetPositions()
+            # xcc = mol.GetConformer().GetPositions()
             # print("filter mol POS2", xcc == xc)
             geometry_graph_A = get_geometry_graph(mol)
             err = check_distances(data, geometry_graph_A)
@@ -436,14 +449,17 @@ class ConformerDataset(DGLDataset):
             # rdmol_dic = copy.deepcopy(mol_dic)
         data_Bs = self.featurize_mol(mol_dic, use_rdkit_coords = True)
         for idx, data_B in enumerate(data_Bs):
-            mol = mol_dic['conformers'][idx]['rd_mol']
             if not data_B:
                 self.failures['featurize_mol_failed_B'] += 1
-                return []
-
-            B_frags, B_frag_ids, B_adj, B_out, B_bond_break, B_cg_bonds, B_cg_map = coarsen_molecule(mol, use_diffusion = self.use_diffusion)
+                bad_idx_B.append(idx)
+                # print("BAD B", idx, len(data_Bs))
+                results_B.append(None)
+                continue
+                # return [None]
+            mol = mol_dic['conformers'][idx]['rd_mol']
+            B_frags, B_frag_ids, B_adj, B_out, B_bond_break, B_cg_bonds, B_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
             B_cg = conditional_coarsen_3d(data_B, B_frag_ids, B_cg_map, B_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
-    #             geometry_graph_B = copy.deepcopy(geometry_graph_A) #get_geometry_graph(mol)
+#             geometry_graph_B = copy.deepcopy(geometry_graph_A) #get_geometry_graph(mol)
             geometry_graph_B = get_geometry_graph(mol)
             Bp = create_pooling_graph(data_B, B_frag_ids)
             geometry_graph_B_cg = get_coarse_geometry_graph(B_cg, B_cg_map)
@@ -453,9 +469,16 @@ class ConformerDataset(DGLDataset):
                 data_B = self.featurize_mol(mol_dic, use_rdkit_coords = True)
     #         data.edge_mask = torch.tensor(edge_mask)
     #         data.mask_rotate = mask_rotate
-    #             return ((data, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids), (data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg))
+#             return ((data, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids), (data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg))
             results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg))
         assert(len(results_A) == len(results_B))
+        bad_idx = set_of_all_elements = set(bad_idx_A) | set(bad_idx_B)
+        results_A = [x for idx, x in enumerate(results_A) if idx not in bad_idx]
+        results_B = [x for idx, x in enumerate(results_B) if idx not in bad_idx]
+        assert(len(results_A) == len(results_B))
+        if len(results_A) == 0 or len(results_B) == 0:
+            # print("Bad Input")
+            return [None]
         return [(a,b) for a,b in zip(results_A, results_B)]
 
 
@@ -513,16 +536,18 @@ class ConformerDataset(DGLDataset):
             return False
         results_A = []
         results_B = []
+        bad_idx_A, bad_idx_B = [], []
         for idx, data in enumerate(datas):
             mol = mol_dic['conformers'][idx]['rd_mol']
             edge_mask, mask_rotate = get_transformation_mask(mol, data)
             if np.sum(edge_mask) < 0.5:
                 self.failures['no_rotable_bonds'] += 1
-                return False
+                bad_idx_A.append(idx)
+                continue
             # print("filter SMILE", smile)
-            A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion = self.use_diffusion)
+            A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
             A_cg = conditional_coarsen_3d(data, A_frag_ids, A_cg_map, A_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
-            xcc = mol.GetConformer().GetPositions()
+            # xcc = mol.GetConformer().GetPositions()
             # print("filter mol POS2", xcc == xc)
             geometry_graph_A = get_geometry_graph(mol)
             err = check_distances(data, geometry_graph_A)
@@ -538,12 +563,13 @@ class ConformerDataset(DGLDataset):
             # rdmol_dic = copy.deepcopy(mol_dic)
         data_Bs = self.featurize_mol(mol_dic, use_rdkit_coords = True)
         for idx, data_B in enumerate(data_Bs):
-            mol = mol_dic['conformers'][idx]['rd_mol']
             if not data_B:
                 self.failures['featurize_mol_failed_B'] += 1
-                return False
-
-            B_frags, B_frag_ids, B_adj, B_out, B_bond_break, B_cg_bonds, B_cg_map = coarsen_molecule(mol, use_diffusion = self.use_diffusion)
+                bad_idx_B.append(idx)
+                continue
+                # return False
+            mol = mol_dic['conformers'][idx]['rd_mol']
+            B_frags, B_frag_ids, B_adj, B_out, B_bond_break, B_cg_bonds, B_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
             B_cg = conditional_coarsen_3d(data_B, B_frag_ids, B_cg_map, B_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
 #             geometry_graph_B = copy.deepcopy(geometry_graph_A) #get_geometry_graph(mol)
             geometry_graph_B = get_geometry_graph(mol)
@@ -558,6 +584,12 @@ class ConformerDataset(DGLDataset):
 #             return ((data, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids), (data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg))
             results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg))
         assert(len(results_A) == len(results_B))
+        bad_idx = set_of_all_elements = set(bad_idx_A) | set(bad_idx_B)
+        results_A = [x for idx, x in enumerate(results_A) if idx not in bad_idx]
+        results_B = [x for idx, x in enumerate(results_B) if idx not in bad_idx]
+        assert(len(results_A) == len(results_B))
+        if len(results_A) == 0 or len(results_B) == 0:
+            return False
         return [(a,b) for a,b in zip(results_A, results_B)]
 
     def len(self):
@@ -578,7 +610,9 @@ class ConformerDataset(DGLDataset):
     def __len__(self):
         r"""The number of examples in the dataset."""
         return len(self.datapoints)
+    
     def save(self):
+        # return True
         graphs, infos = [], []
         for A, B in self.datapoints:
             data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids = A
@@ -625,7 +659,7 @@ class ConformerDataset(DGLDataset):
         canonical_smi = Chem.MolToSmiles(mol_, isomericSmiles=False)
 
         pos = []
-        weights = []
+        # weights = []
 #         if len(confs) > 1:
 #             import ipdb; ipdb.set_trace()
         datas = []
@@ -643,9 +677,10 @@ class ConformerDataset(DGLDataset):
                 continue
 
             pos.append(torch.tensor(mol.GetConformer().GetPositions(), dtype=torch.float))
-            weights.append(conf['boltzmannweight'])
+            # weights.append(conf['boltzmannweight'])
             correct_mol = mol
-            datas.append(featurize_mol(correct_mol, self.types, use_rdkit_coords = use_rdkit_coords))
+            mol_features = featurize_mol(correct_mol, self.types, use_rdkit_coords = use_rdkit_coords)
+            datas.append(mol_features)
             if self.boltzmann_resampler is not None:
                 # torsional Boltzmann generator uses only the local structure of the first conformer
                 break
@@ -671,7 +706,6 @@ class ConformerDataset(DGLDataset):
 #             print(name, len(confs), len(pos), weights)
 #             normalized_weights = [1 / len(weights)] * len(weights)
 #         data.canonical_smi, data.mol, data.pos, data.weights = canonical_smi, correct_mol, pos, normalized_weights
-
         return datas
 
     def resample_all(self, resampler, temperature=None):
@@ -701,9 +735,14 @@ def collate(samples):
 def load_torsional_data(batch_size = 32, mode = 'train', data_dir='/home/dannyreidenbach/data/QM9/qm9/',
                 dataset='qm9', limit_mols=0, log_dir='./test_run', num_workers=1, restart_dir=None, seed=0,
                  split_path='/home/dannyreidenbach/data/QM9/split.npy',
-                  std_pickles='/home/dannyreidenbach/data/QM9/standardized_pickles'):
+                 std_pickles=None):
+# def load_torsional_data(batch_size = 32, mode = 'train', data_dir='/home/dreidenbach/data/torsional_diffusion/QM9/qm9/',
+#                 dataset='qm9', limit_mols=0, log_dir='./test_run', num_workers=1, restart_dir=None, seed=0,
+#                  split_path='/home/dreidenbach/data/torsional_diffusion/QM9/split.npy',
+#                  std_pickles=None):
+                #   std_pickles='/home/dannyreidenbach/data/QM9/standardized_pickles'):
     types = qm9_types if dataset == 'qm9' else drugs_types
-    use_diffusion = False
+    use_diffusion_angle_def = False
     data = ConformerDataset(data_dir, split_path, mode, dataset=dataset,
                                    types=types, transform=None,
                                    num_workers=num_workers,
@@ -711,7 +750,7 @@ def load_torsional_data(batch_size = 32, mode = 'train', data_dir='/home/dannyre
                                    cache_path=None, #args.cache,
                                    name=f'{dataset}_{mode}_{limit_mols}',
                                    pickle_dir=std_pickles,
-                                   use_diffusion=use_diffusion,
+                                   use_diffusion_angle_def=use_diffusion_angle_def,
                                    boltzmann_resampler=None)
     dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=num_workers,
                                             collate_fn = collate)
