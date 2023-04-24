@@ -184,8 +184,7 @@ def get_lig_graph(mol, lig_coords, radius=20, max_neighbor=None):
             dst = list(np.argsort(distance[i, :]))[1: max_neighbor + 1]  # closest would be self loop
         if len(dst) == 0:
             dst = list(np.argsort(distance[i, :]))[1:2]  # closest would be the index i itself > self loop
-            print(
-                f'The lig_radius {radius} was too small for one lig atom such that it had no neighbors. So we connected {i} to the closest other lig atom {dst}')
+            #print(                f'The lig_radius {radius} was too small for one lig atom such that it had no neighbors. So we connected {i} to the closest other lig atom {dst}')
         assert i not in dst
         src = [i] * len(dst)
         src_list.extend(src)
@@ -276,9 +275,9 @@ def get_lig_structure_graph(lig):
 
 def get_geometry_graph(lig): # 2 Hop Distances
     coords = lig.GetConformer().GetPositions()
-    print("Make Geo", coords)
+    #print("Make Geo", coords)
     coords -= np.mean(coords, axis = 0)
-    print("Make Geo remove mean", coords)
+    #print("Make Geo remove mean", coords)
     edges_src = []
     edges_dst = []
     for i, atom in enumerate(lig.GetAtoms()):

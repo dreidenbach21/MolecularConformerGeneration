@@ -12,7 +12,7 @@ coordinates: delta #absolute # or delta or double?
 hydra:
   job:
     env_set: 
-      CUDA_VISIBLE_DEVICES: 5
+      CUDA_VISIBLE_DEVICES: 0
   run:
     dir: outputs/${wandb.name}_${now:%Y-%m-%d_%H-%M-%S}
   job_logging:
@@ -33,5 +33,5 @@ hydra:
 
 wandb:
   project: MCG
-  name: delta_vae_anneal
-  notes: MSE + VAE annealing
+  name: gcp_vae_test_10k
+  notes: MSE + VAE 1e-3 with 10 bit budget

@@ -114,9 +114,9 @@ def autoregressive_bfs(ids, bmap, a=1.0, b=1.1):
     return order
 
 def autoregressive_bfs_with_reference(ids, bmap, bond_break, a=1.0, b=1.1):
-    print(ids)
-    print(bmap)
-    print(bond_break)
+    #print(ids)
+    #print(bmap)
+    #print(bond_break)
     if len(ids) == 1:
         return [0], [-1]
     scores = {}
@@ -152,7 +152,7 @@ def autoregressive_bfs_with_reference(ids, bmap, bond_break, a=1.0, b=1.1):
                     atom_connect = list(set(bond_break[kid]).intersection(ids[cur]))
                     if len(atom_connect) == 0:
                         continue
-                    print("ac", atom_connect, "kid -->", bond_break[kid], kid,ids[x], "cur -->", ids[cur])
+                    #print("ac", atom_connect, "kid -->", bond_break[kid], kid,ids[x], "cur -->", ids[cur])
                     assert(len(atom_connect) == 1)
                     atom_connect = atom_connect[0]
                     break
@@ -171,12 +171,12 @@ def mol2graph(mol, name = "test", radius=4, max_neighbors=None, use_rdkit_coords
         rdkit_coords = get_rdkit_coords(mol, seed) #.numpy()
         R, t = rigid_transform_Kabsch_3D(rdkit_coords.T, true_lig_coords.T)
         lig_coords = ((R @ (rdkit_coords).T).T + t.squeeze())
-        print('kabsch RMSD between rdkit ligand and true ligand is ', np.sqrt(np.sum((lig_coords - true_lig_coords) ** 2, axis=1).mean()).item())
+        #print('kabsch RMSD between rdkit ligand and true ligand is ', np.sqrt(np.sum((lig_coords - true_lig_coords) ** 2, axis=1).mean()).item())
 
         lig_coords = align(torch.from_numpy(rdkit_coords), torch.from_numpy(true_lig_coords)).numpy()
         # print('LOSS kabsch RMSD between rdkit ligand and true ligand is ', np.sqrt(np.sum((lig_coords - true_lig_coords) ** 2, axis=1).mean()).item())
         loss = torch.nn.MSELoss()
-        print('LOSS kabsch MSE between rdkit ligand and true ligand is ', loss(torch.from_numpy(true_lig_coords), torch.from_numpy(lig_coords)).cpu().detach().numpy().item())
+        #print('LOSS kabsch MSE between rdkit ligand and true ligand is ', loss(torch.from_numpy(true_lig_coords), torch.from_numpy(lig_coords)).cpu().detach().numpy().item())
     else:
         lig_coords = true_lig_coords
     num_nodes = lig_coords.shape[0]
@@ -185,7 +185,7 @@ def mol2graph(mol, name = "test", radius=4, max_neighbors=None, use_rdkit_coords
     if remove_centroid:
         lig_coords -= np.mean(lig_coords, axis = 0)
         true_lig_coords -= np.mean(true_lig_coords, axis = 0)
-        print("Remove Centroid", np.mean(lig_coords, axis = 0))
+        #print("Remove Centroid", np.mean(lig_coords, axis = 0))
 
     assert lig_coords.shape[1] == 3
     distance = spa.distance.cdist(lig_coords, lig_coords)
@@ -200,8 +200,7 @@ def mol2graph(mol, name = "test", radius=4, max_neighbors=None, use_rdkit_coords
             dst = list(np.argsort(distance[i, :]))[1: max_neighbors + 1]  # closest would be self loop
         if len(dst) == 0:
             dst = list(np.argsort(distance[i, :]))[1:2]  # closest would be the index i itself > self loop
-            print(
-                f'The lig_radius {radius} was too small for one lig atom such that it had no neighbors. So we connected {i} to the closest other lig atom {dst}')
+            #print(f'The lig_radius {radius} was too small for one lig atom such that it had no neighbors. So we connected {i} to the closest other lig atom {dst}')
         assert i not in dst
         assert dst != []
         src = [i] * len(dst)
@@ -262,7 +261,7 @@ def coarsen_molecule(m, use_diffusion = False):
         torsions = get_torsions_geo([m])
     else:
         torsions = get_torsion_angles(m)
-    print("Torsion Angles", torsions)
+    #print("Torsion Angles", torsions)
     if len(torsions) > 0:
         bond_break = [(b,c) for a,b,c,d in torsions]
         adj = Chem.rdmolops.GetAdjacencyMatrix(m)
@@ -314,7 +313,7 @@ def create_pooling_graph(dgl_graph, frag_ids, latent_dim = 64, use_mean_node_fea
         subg.sort()
         cc = dgl_graph.ndata['x'][subg,:].mean(dim=0).cpu().numpy().reshape(-1,3)
         fc = dgl_graph.ndata['x'][subg,:].cpu().numpy()
-#         print(cc.shape, fc.shape)
+#         qprint(cc.shape, fc.shape)
         chunks.append(fc.shape[0])
         coarse_coords.append(cc)
         fine_coords.append(fc)
@@ -376,8 +375,8 @@ def conditional_coarsen_3d(dgl_graph, frag_ids, cg_map, bond_break = None, radiu
 #         print(subg, coords[0].shape, coords)
     # bfs_order = autoregressive_bfs(frag_ids, cg_map)
     bfs_order, ref_order = autoregressive_bfs_with_reference(frag_ids, cg_map, bond_break)
-    print(bfs_order)
-    print(ref_order)
+    #print(bfs_order)
+    #print(ref_order)
     bfs = np.zeros((num_nodes,1))
     ref = np.zeros((num_nodes,1))
     for order_idx, bead in enumerate(bfs_order): # step 0 --> N
@@ -405,13 +404,14 @@ def conditional_coarsen_3d(dgl_graph, frag_ids, cg_map, bond_break = None, radiu
         dist_list.extend(valid_dist)
         valid_dist_np = distance[0, dst]
         sigma = np.array([1., 2., 5., 10., 30.]).reshape((-1, 1))
-        weights = softmax(- valid_dist_np.reshape((1, -1)) ** 2 / sigma, axis=1)  # (sigma_num, neigh_num)
-        assert weights[0].sum() > 1 - 1e-2 and weights[0].sum() < 1.01
-        diff_vecs = coords[src, :] - coords[dst, :]  # (neigh_num, 3)
-        mean_vec = weights.dot(diff_vecs)  # (sigma_num, 3)
-        denominator = weights.dot(np.linalg.norm(diff_vecs, axis=1))  # (sigma_num,)
-        mean_vec_ratio_norm = np.linalg.norm(mean_vec, axis=1) / denominator  # (sigma_num,)
-        mean_norm_list.append(mean_vec_ratio_norm)
+        # weights = softmax(- valid_dist_np.reshape((1, -1)) ** 2 / sigma, axis=1)  # (sigma_num, neigh_num)
+        # assert weights[0].sum() > 1 - 1e-2 and weights[0].sum() < 1.01
+        # diff_vecs = coords[src, :] - coords[dst, :]  # (neigh_num, 3)
+        # mean_vec = weights.dot(diff_vecs)  # (sigma_num, 3)
+        # denominator = weights.dot(np.linalg.norm(diff_vecs, axis=1))  # (sigma_num,)
+        # mean_vec_ratio_norm = np.linalg.norm(mean_vec, axis=1) / denominator  # (sigma_num,)
+        # mean_norm_list.append(mean_vec_ratio_norm)
+        mean_norm_list.append(np.zeros((5,)))
     else:
         for i in range(num_nodes):
             dst = list(np.where(distance[i, :] < radius)[0])
@@ -420,8 +420,7 @@ def conditional_coarsen_3d(dgl_graph, frag_ids, cg_map, bond_break = None, radiu
                 dst = list(np.argsort(distance[i, :]))[1: max_neighbors + 1]  # closest would be self loop
             if len(dst) == 0:
                 dst = list(np.argsort(distance[i, :]))[1:2]  # closest would be the index i itself > self loop
-                print(
-                    f'The lig_radius {radius} was too small for one lig atom such that it had no neighbors. So we connected {i} to the closest other lig atom {dst}\n')
+                #print(f'The lig_radius {radius} was too small for one lig atom such that it had no neighbors. So we connected {i} to the closest other lig atom {dst}\n')
                 # print(dgl_graph.ndata['x'].shape, frag_ids,  cg_map)
             assert i not in dst
             assert dst != []
@@ -429,7 +428,7 @@ def conditional_coarsen_3d(dgl_graph, frag_ids, cg_map, bond_break = None, radiu
             required_dst = cg_map[i]
             for d in required_dst:
                 if d not in dst:
-                    print("[Required] adding CG edge", i, d, distance[i, d])
+                    #print("[Required] adding CG edge", i, d, distance[i, d])
                     dst.append(d)
             
             src = [i] * len(dst)
@@ -477,7 +476,7 @@ def get_rdkit_coords(mol, seed = None):
         ps.randomSeed = seed
     id = AllChem.EmbedMolecule(mol, ps)
     if id == -1:
-        print('rdkit coords could not be generated without using random coords. using random coords now.')
+        #print('rdkit coords could not be generated without using random coords. using random coords now.')
         ps.useRandomCoords = True
         AllChem.EmbedMolecule(mol, ps)
         try:
@@ -522,8 +521,7 @@ def mol2graphV2(mol, name = "test", radius=4, max_neighbors=None, use_rdkit_coor
             dst = list(np.argsort(distance[i, :]))[1: max_neighbors + 1]  # closest would be self loop
         if len(dst) == 0:
             dst = list(np.argsort(distance[i, :]))[1:2]  # closest would be the index i itself > self loop
-            print(
-                f'The lig_radius {radius} was too small for one lig atom such that it had no neighbors. So we connected {i} to the closest other lig atom {dst}')
+            #print(f'The lig_radius {radius} was too small for one lig atom such that it had no neighbors. So we connected {i} to the closest other lig atom {dst}')
         assert i not in dst
         assert dst != []
         src = [i] * len(dst)

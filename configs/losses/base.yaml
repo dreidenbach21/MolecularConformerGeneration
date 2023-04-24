@@ -10,6 +10,6 @@ ar_distance_weight: 0 #0.3
 
 ar_loss_bottom_up: True
 
-kl_weight: 0 #1
+kl_weight: 1e-3 #1
 x_cc_weight: 0
 h_cc_weight: 0

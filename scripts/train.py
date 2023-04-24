@@ -11,7 +11,7 @@ import torch
 import wandb
 import random
 import logging
-from utils.torsional_diffusion_data import load_torsional_data  # , QM9_DIMS, DRUG_DIMS
+from utils.torsional_diffusion_data_all import load_torsional_data  # , QM9_DIMS, DRUG_DIMS
 from model.vae import VAE
 import datetime
 
@@ -70,7 +70,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     val_loss_log_name =  NAME + "_val"
     train_loss_log_total, val_loss_log_total = [], []
     
-    kl_annealing = True
+    kl_annealing = False
     kl_weight = 1e-6
     kl_annealing_rate = 1e-5
     kl_annealing_interval = 1
