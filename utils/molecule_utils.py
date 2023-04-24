@@ -403,15 +403,16 @@ def conditional_coarsen_3d(dgl_graph, frag_ids, cg_map, bond_break = None, radiu
         dst_list.extend(dst)
         valid_dist = list(distance[0, dst])
         dist_list.extend(valid_dist)
-        valid_dist_np = distance[0, dst]
+        # valid_dist_np = distance[0, dst]
         sigma = np.array([1., 2., 5., 10., 30.]).reshape((-1, 1))
-        weights = softmax(- valid_dist_np.reshape((1, -1)) ** 2 / sigma, axis=1)  # (sigma_num, neigh_num)
-        assert weights[0].sum() > 1 - 1e-2 and weights[0].sum() < 1.01
-        diff_vecs = coords[src, :] - coords[dst, :]  # (neigh_num, 3)
-        mean_vec = weights.dot(diff_vecs)  # (sigma_num, 3)
-        denominator = weights.dot(np.linalg.norm(diff_vecs, axis=1))  # (sigma_num,)
-        mean_vec_ratio_norm = np.linalg.norm(mean_vec, axis=1) / denominator  # (sigma_num,)
-        mean_norm_list.append(mean_vec_ratio_norm)
+        # weights = softmax(- valid_dist_np.reshape((1, -1)) ** 2 / sigma, axis=1)  # (sigma_num, neigh_num)
+        # assert weights[0].sum() > 1 - 1e-2 and weights[0].sum() < 1.01
+        # diff_vecs = coords[src, :] - coords[dst, :]  # (neigh_num, 3)
+        # mean_vec = weights.dot(diff_vecs)  # (sigma_num, 3)
+        # denominator = weights.dot(np.linalg.norm(diff_vecs, axis=1))  # (sigma_num,)
+        # mean_vec_ratio_norm = np.linalg.norm(mean_vec, axis=1) / denominator  # (sigma_num,)
+        # mean_norm_list.append(mean_vec_ratio_norm)
+        mean_norm_list.append(np.zeros((5,)))
     else:
         for i in range(num_nodes):
             dst = list(np.where(distance[i, :] < radius)[0])

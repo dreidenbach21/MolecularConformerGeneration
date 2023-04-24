@@ -309,8 +309,8 @@ class ConformerDataset(DGLDataset):
                 with open(self.cache_path, "wb") as f:
                     pickle.dump(self.datapoints, f)
 
-        if self.limit_molecules:
-            self.datapoints = self.datapoints[:self.limit_molecules]
+        # if self.limit_molecules:
+        #     self.datapoints = self.datapoints[:self.limit_molecules]
             
     def preprocess_datapoints(self, root, split_path, pickle_dir, mode, num_workers, limit_molecules):
         mols_per_pickle = 1000
@@ -334,16 +334,21 @@ class ConformerDataset(DGLDataset):
         print('Preparing to process', len(smiles), 'smiles')
         datapoints = []
         if num_workers > 1:
-            p = Pool(num_workers)
-            p.__enter__()
-        with tqdm.tqdm(total=len(smiles)) as pbar:
-            map_fn = p.imap if num_workers > 1 else map
-            for t in map_fn(self.filter_smiles, smiles):
-                if t:
-#                     datapoints.append(t)
-                    datapoints.extend(t)
-                pbar.update()
-        if num_workers > 1: p.__exit__(None, None, None)
+            with multiprocessing.Pool(num_workers) as pool:
+                 results = list(tqdm(pool.imap(self.filter_smiles, smiles), total=len(smiles)))
+            datapoints = [item for sublist in results for item in sublist]
+        else:
+            if num_workers > 1:
+                p = Pool(num_workers)
+                p.__enter__()
+            with tqdm.tqdm(total=len(smiles)) as pbar:
+                map_fn = p.imap if num_workers > 1 else map
+                for t in map_fn(self.filter_smiles, smiles):
+                    if t:
+    #                     datapoints.append(t)
+                        datapoints.extend(t)
+                    pbar.update()
+            if num_workers > 1: p.__exit__(None, None, None)
         print('Fetched', len(datapoints), 'mols successfully')
         print(self.failures)
         if pickle_dir: del self.current_pickle
@@ -468,8 +473,39 @@ class ConformerDataset(DGLDataset):
     def __len__(self):
         r"""The number of examples in the dataset."""
         return len(self.datapoints)
-
-
+    
+    def save(self):
+        graphs, infos = [], []
+        for A, B in self.datapoints:
+            data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids = A
+            data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg = B
+            infos.append(A_frag_ids)
+            graphs.extend([data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg])
+        dgl.data.utils.save_info(self.save_dir + f'/{self.name}_infos.bin', infos)
+        dgl.data.utils.save_graphs(self.save_dir + f'/{self.name}_graphs.bin', graphs)
+        print("Saved Successfully", len(self.datapoints))
+    
+    def load(self):
+        graphs, _ = dgl.data.utils.load_graphs(self.save_dir + f'/{self.name}_graphs.bin')
+        info = dgl.data.utils.load_info(self.save_dir + f'/{self.name}_infos.bin')
+        count = 0
+        results_A, results_B = [], []
+        for i in range(0, len(graphs), 10):
+            AB = graphs[i: i+10]
+            A_frag_ids = info[count]
+            count += 1
+            data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg = AB[:5]
+            data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg = AB[5:]
+            results_A.append((data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids))
+            results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg))
+        self.datapoints = [(a,b) for a,b in zip(results_A, results_B)]
+        print("Loaded Successfully", len(self.datapoints))
+    
+    def has_cache(self):
+         return os.path.exists(os.path.join(self.save_dir, f'{self.name}_graphs.bin'))
+            
+            
+        
     def __repr__(self):
         return f'Dataset("{self.name}", num_graphs={len(self)},' + \
                f' save_path={self.save_path})'
@@ -570,6 +606,7 @@ def load_torsional_data(batch_size = 32, mode = 'train', data_dir='/home/dannyre
                                    types=types, transform=None,
                                    num_workers=num_workers,
                                    limit_molecules=limit_mols, #args.limit_train_mols,
+                                   name = f'{dataset}_{mode}',
                                    cache_path=None, #args.cache,
                                    pickle_dir=std_pickles,
                                    use_diffusion=use_diffusion,
