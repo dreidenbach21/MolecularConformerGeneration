@@ -15,6 +15,7 @@ class VAE(nn.Module):
         self.kl_free_bits = kl_params['kl_free_bits']
         self.kl_prior_logvar_clamp = kl_params['kl_prior_logvar_clamp']
         self.kl_softplus = kl_params['kl_softplus']
+        self.use_mim = kl_params['use_mim']
 
         self.kl_v_beta = loss_params['kl_weight']
         self.kl_h_beta = 0
@@ -49,11 +50,11 @@ class VAE(nn.Module):
     def forward(self, frag_ids, A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch, validation = False):
         enc_out = self.forward_vae(A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch, validation)
         results, geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg = enc_out
-        print("[ENC] encoder output geom loss adn geom cg loss", geom_losses, geom_loss_cg)
+        # print("[ENC] encoder output geom loss adn geom cg loss", geom_losses, geom_loss_cg)
         natoms = A_graph.batch_num_nodes()
         nbeads = A_cg.batch_num_nodes()
-        kl_v, kl_v_un_clamped = 0, 0
-        mim = 0
+        kl_v, kl_v_un_clamped = torch.tensor([0]).to(results["prior_mean_V"].device), torch.tensor([0]).to(results["prior_mean_V"].device)
+        mim = torch.tensor([0]).to(results["prior_mean_V"].device)
         if not validation:
             kl_v, kl_v_un_clamped = self.kl(results["posterior_mean_V"], results["posterior_logvar_V"], results["prior_mean_V"], results["prior_logvar_V"], natoms, nbeads, coordinates = True)
             # kl_v2, kl_v_un_clamped2 = self.kl_built_in(results["posterior_mean_V"], results["posterior_logvar_V"], results["prior_mean_V"], results["prior_logvar_V"], natoms, nbeads, coordinates = True)
@@ -78,15 +79,18 @@ class VAE(nn.Module):
             d_squared = torch.sum((generated_coords[src] - generated_coords[dst]) ** 2, dim=1)
             geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2).unsqueeze(0)) #TODO: scaling hurt performance
             # geom_loss.append(torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
-        print("[Distance Loss]", geom_loss)
+        # print("[Distance Loss]", geom_loss)
         return torch.mean(torch.cat(geom_loss))
 
-    def loss_function(self, generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geometry_graph, AR_loss, step = 0):
+    def loss_function(self, generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geometry_graph, AR_loss, step = 0, log_latent_stats = True):
         # kl_v, kl_h, kl_v_reg = KL_terms
         kl_v, kl_h, kl_v_unclamped, mim = KL_terms
-        print("[Loss Func] KL V", kl_v)
-        print("[Loss Func] kl h", kl_h)
-        kl_loss = self.kl_v_beta*kl_v # + self.kl_h_beta*kl_h # + self.kl_reg_beta*kl_v_reg
+        # print("[Loss Func] KL V", kl_v)
+        # print("[Loss Func] kl h", kl_h)
+        if self.use_mim:
+            kl_loss = 0.1*mim
+        else:
+            kl_loss = self.kl_v_beta*kl_v # + self.kl_h_beta*kl_h # + self.kl_reg_beta*kl_v_reg
         # kl_loss = 0.1*mim
         # if step < 0:#50:
         #     kl_loss = 0.1*kl_loss
@@ -100,25 +104,27 @@ class VAE(nn.Module):
         for natoms in generated_molecule.batch_num_nodes():
             x_cc_loss.append(self.rmsd(x_cc[start: start + natoms], x_true[start: start + natoms], align = True).unsqueeze(0))
             start += natoms
-        print("[Loss Func] aligned X CC loss", x_cc_loss)
+        # print("[Loss Func] aligned X CC loss", x_cc_loss)
         x_cc_loss = torch.cat(x_cc_loss).mean() #sum(x_cc_loss) switch to mean over batch size
         
         ar_mse = AR_loss
         # ar_mse, global_mse, ar_dist_loss = self.coordinate_loss(dec_results, generated_molecule, align =  True)
+        import ipdb; ipdb.set_trace()
         _, global_mse = self.coordinate_loss(dec_results, generated_molecule, align =  True)
-        print()
-        print("[Loss Func] Auto Regressive MSE", ar_mse)
-        print("[Loss Func] Kabsch Align MSE", global_mse)
-        print("[Loss Func] step", step, "KL Loss", kl_loss)
-        print()
+        # print()
+        # print("[Loss Func] Auto Regressive MSE", ar_mse)
+        # print("[Loss Func] Kabsch Align MSE", global_mse)
+        # print("[Loss Func] step", step, "KL Loss", kl_loss)
+        # print()
         loss =  self.lambda_ar_mse*ar_mse + self.lambda_global_mse*global_mse + kl_loss #+ cc_loss
         results, geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg = enc_out
         
-        l2_v = torch.norm(self.std(results["posterior_logvar_V"]), 2)**2
-        l2_v2 = torch.norm(results["posterior_mean_V"], 2)**2
-        l2_vp = torch.norm(self.std(results["prior_logvar_V"]), 2)**2
-        l2_vp2 = torch.norm(results["prior_mean_V"], 2)**2
-        l2_d = torch.norm(results["posterior_mean_V"]-results["prior_mean_V"], 2)**2
+        if log_latent_stats:
+            l2_v = torch.norm(self.std(results["posterior_logvar_V"]), 2)**2
+            l2_v2 = torch.norm(results["posterior_mean_V"], 2)**2
+            l2_vp = torch.norm(self.std(results["prior_logvar_V"]), 2)**2
+            l2_vp2 = torch.norm(results["prior_mean_V"], 2)**2
+            l2_d = torch.norm(results["posterior_mean_V"]-results["prior_mean_V"], 2)**2
         # l2_h = torch.norm(results["posterior_logvar_h"], 2)**2
         # print("log variance norm: v, h: ", l2_v, l2_h)
         # l2_loss = 0 #self.weight_decay_v*l2_v+self.weight_decay_h*l2_h
@@ -134,27 +140,41 @@ class VAE(nn.Module):
         # print("[Loss Func] distance", distance_loss)
         # print("[Loss Func] ar distance", ar_dist_loss)
         # loss += distance_loss #+ ar_dist_loss
-        
-        loss_results = {
-            'kl': kl_loss.cpu(),
-            'kl_unclamped': self.kl_v_beta*kl_v_unclamped.cpu(),
-            # 'global_distance': distance_loss.cpu(),
-            # 'ar_distance': ar_dist_loss.cpu(),
-            'global_mse': self.lambda_global_mse*global_mse.cpu(),
-            'ar_mse': self.lambda_ar_mse*ar_mse.cpu(),
-            'channel_selection_coords_align': x_cc_loss.cpu(),
-            'rdkit_aligned_mse': rdkit_loss.cpu(),
-            'L2 Norm Squared Posterior LogV': l2_v.cpu(),
-            'L2 Norm Squared Posterior Mean': l2_v2.cpu(),
-            'L2 Norm Squared Prior LogV': l2_vp.cpu(),
-            'L2 Norm Squared Prior Mean': l2_vp2.cpu(),
-            'L2 Norm Squared (Posterior - Prior) Mean': l2_d.cpu(),
-            'unscaled kl': kl_v.cpu(),
-            'unscaled unclamped kl': kl_v_unclamped.cpu(),
-            'unscaled mim': mim.cpu(),
-            'mim': 0.1*mim.cpu(),
-            'beta_kl': self.kl_v_beta,
-        }
+        if log_latent_stats:
+            loss_results = {
+                'latent reg loss': kl_loss.cpu(),
+                'kl_unclamped': self.kl_v_beta*kl_v_unclamped.cpu(),
+                # 'global_distance': distance_loss.cpu(),
+                # 'ar_distance': ar_dist_loss.cpu(),
+                'global_mse': self.lambda_global_mse*global_mse.cpu(),
+                'ar_mse': self.lambda_ar_mse*ar_mse.cpu(),
+                'channel_selection_coords_align': x_cc_loss.cpu(),
+                'rdkit_aligned_mse': rdkit_loss.cpu(),
+                'L2 Norm Squared Posterior LogV': l2_v.cpu(),
+                'L2 Norm Squared Posterior Mean': l2_v2.cpu(),
+                'L2 Norm Squared Prior LogV': l2_vp.cpu(),
+                'L2 Norm Squared Prior Mean': l2_vp2.cpu(),
+                'L2 Norm Squared (Posterior - Prior) Mean': l2_d.cpu(),
+                'unscaled kl': kl_v.cpu(),
+                'unscaled unclamped kl': kl_v_unclamped.cpu(),
+                'unscaled mim': mim.cpu(),
+                'mim': 0.1*mim.cpu(),
+                'beta_kl': self.kl_v_beta,
+            }
+        else:
+            loss_results = {
+                'latent reg loss': kl_loss.cpu(),
+                'kl_unclamped': self.kl_v_beta*kl_v_unclamped.cpu(),
+                'global_mse': self.lambda_global_mse*global_mse.cpu(),
+                'ar_mse': self.lambda_ar_mse*ar_mse.cpu(),
+                'channel_selection_coords_align': x_cc_loss.cpu(),
+                'rdkit_aligned_mse': rdkit_loss.cpu(),
+                'unscaled kl': kl_v.cpu(),
+                'unscaled unclamped kl': kl_v_unclamped.cpu(),
+                'unscaled mim': mim.cpu(),
+                'mim': 0.1*mim.cpu(),
+                'beta_kl': self.kl_v_beta,
+            }
         return loss, loss_results #(ar_mse.cpu(), final_align_rmsd.cpu(), kl_loss.cpu(), x_cc_loss.cpu(), h_cc_loss.cpu(),l2_v.cpu(), l2_v2.cpu(), l2_vp.cpu(), l2_vp2.cpu(), l2_d.cpu(), rdkit_loss.cpu(), distance_loss.cpu(), ar_dist_loss.cpu())
 
     def std(self, input):
@@ -174,8 +194,11 @@ class VAE(nn.Module):
         lig_coords_mean = lig_coords.mean(dim=0, keepdim=True)  # (1,3)
 
         A = (lig_coords_pred - lig_coords_pred_mean).transpose(0, 1) @ (lig_coords - lig_coords_mean)+1e-7 #added noise to help with gradients
-
+        # if torch.isnan(A).any() or torch.isinf(A).any():
+        #     print("\n\n\n\n\n\n\n\n\n\nThe SVD tensor contains NaN or Inf values")
+        #     import ipdb; ipdb.set_trace()
         U, S, Vt = torch.linalg.svd(A)
+        
 
         corr_mat = torch.diag(torch.tensor([1, 1, torch.sign(torch.det(A))], device=lig_coords_pred.device))
         rotation = (U @ corr_mat) @ Vt
@@ -258,7 +281,7 @@ class VAE(nn.Module):
         #     # print()
         #     # loss += arc
         global_mse_loss = [self.rmsd(m.ndata['x_cc'],m.ndata['x_true'], align = True).unsqueeze(0) for m in dgl.unbatch(generated_molecule)]
-        print("Align MSE Loss", global_mse_loss)
+        # print("Align MSE Loss", global_mse_loss)
         global_mse_loss = torch.cat(global_mse_loss).mean() #sum(global_mse_loss)
         return ar_loss, global_mse_loss #, ar_dist_losses
     
@@ -266,7 +289,7 @@ class VAE(nn.Module):
         (v_A, h_A), (v_B, h_B), geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg = self.encoder(A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, epoch, prior_only = validation)
         # ipdb.set_trace()
         if not validation:
-            print("[Encoder] ecn output V A", torch.min(v_A).item(), torch.max(v_A).item())
+            # print("[Encoder] ecn output V A", torch.min(v_A).item(), torch.max(v_A).item())
             posterior_input_V = torch.cat((v_A, v_B), dim = 1) # N x 2F x 3
             posterior_input_h = torch.cat((h_A, h_B), dim = 1) # N x 2D
             posterior_mean_V = self.posterior_mean_V(posterior_input_V)
@@ -275,12 +298,12 @@ class VAE(nn.Module):
             posterior_mean_h = self.posterior_mean_h(posterior_input_h)
             posterior_logvar_V = self.posterior_logvar_V(posterior_input_V.reshape((posterior_input_V.shape[0], -1))).unsqueeze(2)
             posterior_logvar_h = self.posterior_logvar_h(posterior_input_h)
-            print("[Encoder] posterior mean V", torch.min(posterior_mean_V).item(), torch.max(posterior_mean_V).item()) #, torch.sum(posterior_mean_V, dim = 1))
-            print("[Encoder] posterior logvar V", torch.min(posterior_logvar_V).item(), torch.max(posterior_logvar_V).item()) #, torch.sum(posterior_logvar_V,  dim = 1))
-            print("[Encoder] posterior mean h", torch.min(posterior_mean_h).item(), torch.max(posterior_mean_h).item(), torch.sum(posterior_mean_h).item())
-            print("[Encoder] posterior logvar h", torch.min(posterior_logvar_h).item(), torch.max(posterior_logvar_h).item(), torch.sum(posterior_logvar_h).item())
+            # print("[Encoder] posterior mean V", torch.min(posterior_mean_V).item(), torch.max(posterior_mean_V).item()) #, torch.sum(posterior_mean_V, dim = 1))
+            # print("[Encoder] posterior logvar V", torch.min(posterior_logvar_V).item(), torch.max(posterior_logvar_V).item()) #, torch.sum(posterior_logvar_V,  dim = 1))
+            # print("[Encoder] posterior mean h", torch.min(posterior_mean_h).item(), torch.max(posterior_mean_h).item(), torch.sum(posterior_mean_h).item())
+            # print("[Encoder] posterior logvar h", torch.min(posterior_logvar_h).item(), torch.max(posterior_logvar_h).item(), torch.sum(posterior_logvar_h).item())
         
-        print("[Encoder] ecn output V B", torch.min(v_B).item(), torch.max(v_B).item())
+        # print("[Encoder] ecn output V B", torch.min(v_B).item(), torch.max(v_B).item())
         prior_mean_V = self.prior_mean_V(v_B)
         prior_mean_h = self.prior_mean_h(h_B)
         # prior_logvar_V = self.prior_logvar_V(v_B.reshape((v_B.shape[0], -1))).unsqueeze(2)
@@ -289,10 +312,10 @@ class VAE(nn.Module):
         prior_logvar_h = self.prior_logvar_h(h_B)
         # if self.kl_prior_logvar_clamp > -1:
         #     prior_logvar_V = torch.clamp(prior_logvar_V, max = self.kl_prior_logvar_clamp)
-        print("[Encoder] prior mean V", torch.min(prior_mean_V).item(), torch.max(prior_mean_V).item()) #, torch.sum(prior_mean_V,  dim = 1))
-        print("[Encoder] prior logvar V", torch.min(prior_logvar_V).item(), torch.max(prior_logvar_V).item()) #, torch.sum(prior_logvar_V,  dim = 1))
-        print("[Encoder] prior mean h", torch.min(prior_mean_h).item(), torch.max(prior_mean_h).item(), torch.sum(prior_mean_h).item())
-        print("[Encoder] prior logvar h", torch.min(prior_logvar_h).item(), torch.max(prior_logvar_h).item(), torch.sum(prior_logvar_h).item())
+        # print("[Encoder] prior mean V", torch.min(prior_mean_V).item(), torch.max(prior_mean_V).item()) #, torch.sum(prior_mean_V,  dim = 1))
+        # print("[Encoder] prior logvar V", torch.min(prior_logvar_V).item(), torch.max(prior_logvar_V).item()) #, torch.sum(prior_logvar_V,  dim = 1))
+        # print("[Encoder] prior mean h", torch.min(prior_mean_h).item(), torch.max(prior_mean_h).item(), torch.sum(prior_mean_h).item())
+        # print("[Encoder] prior logvar h", torch.min(prior_logvar_h).item(), torch.max(prior_logvar_h).item(), torch.sum(prior_logvar_h).item())
 
         # print("\n[Enocoder] prior logvar mlp weight norms", torch.norm(self.prior_logvar_V.linear.weight), torch.norm(self.prior_logvar_V.linear2.weight))
         # print("\n[Enocoder] posterior logvar mlp weight norms", torch.norm(self.posterior_logvar_V.linear.weight), torch.norm(self.posterior_logvar_V.linear2.weight))
@@ -302,7 +325,7 @@ class VAE(nn.Module):
         else:
             Z_V = self.reparameterize(posterior_mean_V, posterior_logvar_V)
             Z_h = self.reparameterize(posterior_mean_h, posterior_logvar_h)
-        print("[Encoder] Z_V post vae step", torch.min(Z_V).item(), torch.max(Z_V).item())
+        # print("[Encoder] Z_V post vae step", torch.min(Z_V).item(), torch.max(Z_V).item())
 
         A_cg.ndata["Z_V"] = Z_V
         A_cg.ndata["Z_h"] = Z_h
@@ -321,13 +344,14 @@ class VAE(nn.Module):
             "prior_mean_h": prior_mean_h,
             "prior_logvar_V": prior_logvar_V,
             "prior_logvar_h": prior_logvar_h,
-
+        }
+        if not validation:
+            results.update({
             "posterior_mean_V": posterior_mean_V,
             "posterior_mean_h": posterior_mean_h,
             "posterior_logvar_V": posterior_logvar_V,
             "posterior_logvar_h": posterior_logvar_h,
-
-        }
+            })
         return results, geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg
 
     def reparameterize(self, mean, logvar, scale = 1.0):
@@ -397,6 +421,7 @@ class VAE(nn.Module):
     def mim(self, z, z_mean, z_logvar, z_mean_prior, z_logvar_prior, natoms, nbeads, coordinates = False):
         assert len(natoms) == len(nbeads)
         free_bits_per_dim = self.kl_free_bits/z_mean[0].numel()
+        z_logvar = torch.clamp(z_logvar, min = -6) #! minimum uncertainty
         if self.kl_softplus:
             posterior_std = 1e-12 + F.softplus(z_logvar / 2)
             prior_std = 1e-12 + F.softplus(z_logvar_prior / 2)
@@ -405,7 +430,6 @@ class VAE(nn.Module):
             prior_std = 1e-12 + torch.exp(z_logvar_prior / 2)
         posterior = torch.distributions.Normal(loc = z_mean, scale = posterior_std)
         prior = torch.distributions.Normal(loc = z_mean_prior, scale = prior_std)
-        
         log_q_z_given_x = self.kl_loss(posterior.log_prob(z).sum(-1).sum(-1), natoms, nbeads) #.sum(-1).sum(-1).mean()
         log_p_z = self.kl_loss(prior.log_prob(z).sum(-1).sum(-1), natoms, nbeads)
         loss_terms = -0.5 * (log_q_z_given_x + log_p_z)

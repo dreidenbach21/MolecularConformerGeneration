@@ -2,12 +2,14 @@ from utils.equivariant_model_utils import *
 from utils.geometry_utils import *
 from decoder_layers import IEGMN_Bidirectional
 from decoder_delta_layers import IEGMN_Bidirectional_Delta
+from decoder_double_delta_layers import IEGMN_Bidirectional_Double_Delta
 from collections import defaultdict
 import numpy as np
 import copy
 from torch import nn
 import torch.nn.functional as F
 import dgl
+from tqdm import tqdm
 from utils.neko_fixed_attention import neko_MultiheadAttention
 
 import ipdb
@@ -16,21 +18,23 @@ class Decoder(nn.Module):
     def __init__(self, atom_embedder, coordinate_type, n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
                  use_edge_features_in_gmn, use_mean_node_features, atom_emb_dim, latent_dim, coord_F_dim,
                  dropout, nonlin, leakyrelu_neg_slope, random_vec_dim=0, random_vec_std=1, use_scalar_features=True,
-                 num_A_feats=None, save_trajectories=False, weight_sharing = True, conditional_mask=False, **kwargs):
+                 num_A_feats=None, save_trajectories=False, weight_sharing = True, conditional_mask=False, verbose = False, **kwargs):
         super(Decoder, self).__init__()
         # self.mha = torch.nn.MultiheadAttention(embed_dim = 3, num_heads = 1, batch_first = True)
+        self.verbose = verbose
         self.mha = neko_MultiheadAttention(embed_dim = 3, num_heads = 1, batch_first = True)
+        self.double = False
         if coordinate_type == "delta":
             self.iegmn = IEGMN_Bidirectional_Delta(n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
                  use_edge_features_in_gmn, use_mean_node_features, atom_emb_dim, latent_dim, coord_F_dim,
                  dropout, nonlin, leakyrelu_neg_slope, random_vec_dim, random_vec_std, use_scalar_features,
                  save_trajectories, weight_sharing, conditional_mask, **kwargs).cuda() #iegmn
-        # elif coordinate_type == "double":
-        #     self.iegmn = IEGMN_Bidirectional_Double_Delta(n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
-        #          use_edge_features_in_gmn, use_mean_node_features, atom_emb_dim, latent_dim, coord_F_dim,
-        #          dropout, nonlin, leakyrelu_neg_slope, random_vec_dim, random_vec_std, use_scalar_features,
-        #          save_trajectories, weight_sharing, conditional_mask, **kwargs).cuda() #iegmn
-        # TODO: implement double deltas
+        elif coordinate_type == "double":
+            self.double = True
+            self.iegmn = IEGMN_Bidirectional_Double_Delta(n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
+                 use_edge_features_in_gmn, use_mean_node_features, atom_emb_dim, latent_dim, coord_F_dim,
+                 dropout, nonlin, leakyrelu_neg_slope, random_vec_dim, random_vec_std, use_scalar_features,
+                 save_trajectories, weight_sharing, conditional_mask, **kwargs).cuda() #iegmn
         else:
             self.iegmn = IEGMN_Bidirectional(n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
                     use_edge_features_in_gmn, use_mean_node_features, atom_emb_dim, latent_dim, coord_F_dim,
@@ -103,21 +107,21 @@ class Decoder(nn.Module):
         Z_h = A_cg.ndata["Z_h"] # N x D
         N, F, _ = Z_V.shape
         _, D = Z_h.shape
-        print("[CC] V input", torch.min(Z_V).item(), torch.max(Z_V).item())
-        print("[CC] h input", torch.min(Z_h).item(), torch.max(Z_h).item())
+        if self.verbose: print("[CC] V input", torch.min(Z_V).item(), torch.max(Z_V).item())
+        if self.verbose: print("[CC] h input", torch.min(Z_h).item(), torch.max(Z_h).item())
         # ipdb.set_trace()
         Z_V_ff = self.feed_forward_V(Z_V)
         # Z_h_ff = self.feed_forward_h(Z_h)
-        print("[CC] V input FF", torch.min(Z_V_ff).item(), torch.max(Z_V_ff).item())
-        # print("[CC] h input FF", torch.min(Z_h_ff).item(), torch.max(Z_h_ff).item())
+        if self.verbose: print("[CC] V input FF", torch.min(Z_V_ff).item(), torch.max(Z_V_ff).item())
+        # if self.verbose: print("[CC] h input FF", torch.min(Z_h_ff).item(), torch.max(Z_h_ff).item())
         Z_V = Z_V_ff + Z_V
         # Z_h = Z_h_ff + Z_h
-        print("[CC] V input FF add", torch.min(Z_V).item(), torch.max(Z_V).item())
-        # print("[CC] h input FF add", torch.min(Z_h).item(), torch.max(Z_h).item())
+        if self.verbose: print("[CC] V input FF add", torch.min(Z_V).item(), torch.max(Z_V).item())
+        # if self.verbose: print("[CC] h input FF add", torch.min(Z_h).item(), torch.max(Z_h).item())
         Z_V = self.eq_norm(Z_V)
         # Z_h = self.inv_norm(Z_h)
-        print("[CC] V add norm", torch.min(Z_V).item(), torch.max(Z_V).item())
-        # print("[CC] h add norm", torch.min(Z_h).item(), torch.max(Z_h).item())
+        if self.verbose: print("[CC] V add norm", torch.min(Z_V).item(), torch.max(Z_V).item())
+        # if self.verbose: print("[CC] h add norm", torch.min(Z_h).item(), torch.max(Z_h).item())
         # Equivariant Channel Selection
         Q, attn_mask, cg_to_fg_info = self.get_queries_and_mask(A_cg, B, N, F, cg_frag_ids)
         K = Z_V
@@ -133,30 +137,32 @@ class Decoder(nn.Module):
         # h_og_lifted = self.h_channel_selection(self.atom_embedder(h_og)) # n x D
         # h_cc = h_og_lifted + torch.repeat_interleave(Z_h, torch.tensor(cg_to_fg_info).to(self.device), dim = 0) # n x D
         # Second Add Norm
-        print("[CC] V cc attn update", torch.min(x_cc).item(), torch.max(x_cc).item())
-        # print("[CC] h cc mpnn update", torch.min(h_cc).item(), torch.max(h_cc).item())
+        if self.verbose: print("[CC] V cc attn update", torch.min(x_cc).item(), torch.max(x_cc).item())
+        # if self.verbose: print("[CC] h cc mpnn update", torch.min(h_cc).item(), torch.max(h_cc).item())
         x_cc_ff = self.feed_forward_V_3(x_cc.unsqueeze(2)).squeeze(2)
         # h_cc_ff = self.feed_forward_h_3(h_cc)
-        print("[CC] V input FF 3", torch.min(x_cc_ff).item(), torch.max(x_cc_ff).item())
-        # print("[CC] h input FF 3", torch.min(h_cc_ff).item(), torch.max(h_cc_ff).item())
+        if self.verbose: print("[CC] V input FF 3", torch.min(x_cc_ff).item(), torch.max(x_cc_ff).item())
+        # if self.verbose: print("[CC] h input FF 3", torch.min(h_cc_ff).item(), torch.max(h_cc_ff).item())
         x_cc = x_cc_ff + x_cc
         # h_cc = h_cc_ff + h_cc
-        print("[CC] V cc add 2", torch.min(x_cc).item(), torch.max(x_cc).item())
-        # print("[CC] h cc add 2", torch.min(h_cc).item(), torch.max(h_cc).item())
+        if self.verbose: print("[CC] V cc add 2", torch.min(x_cc).item(), torch.max(x_cc).item())
+        # if self.verbose: print("[CC] h cc add 2", torch.min(h_cc).item(), torch.max(h_cc).item())
         x_cc = self.eq_norm_2(x_cc.unsqueeze(2)).squeeze(2)
         # h_cc = self.inv_norm_2(h_cc)
-        # print("same") #! the above makes it worse for some reason for bn
+        # if self.verbose: print("same") #! the above makes it worse for some reason for bn
         h_cc = self.atom_embedder(B.ndata['ref_feat']) #! testing
-        print("[CC] V cc add norm --> final", torch.min(x_cc).item(), torch.max(x_cc).item())
-        print("[CC] h cc add norm --> final", torch.min(h_cc).item(), torch.max(h_cc).item())
-        print()
+        if self.verbose: print("[CC] V cc add norm --> final", torch.min(x_cc).item(), torch.max(x_cc).item())
+        if self.verbose: print("[CC] h cc add norm --> final", torch.min(h_cc).item(), torch.max(h_cc).item())
+        if self.verbose: print()
         return x_cc, h_cc # we have selected the features for all coarse grain beads in parallel
 
 
     def autoregressive_step(self, latent, prev = None, t = 0, geo_latent = None, geo_current = None):
-        # ipdb.set_trace()
-        coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory = self.iegmn(latent, prev, mpnn_only = t==0, geometry_graph_A = geo_latent, geometry_graph_B = geo_current, teacher_forcing=self.teacher_forcing, atom_embedder=self.atom_embedder)
-        # coords_A held in latent.ndata['x_now']
+        coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory = self.iegmn(latent, prev, mpnn_only = t==0,
+                                                                                            geometry_graph_A = geo_latent,
+                                                                                            geometry_graph_B = geo_current,
+                                                                                            teacher_forcing=self.teacher_forcing,
+                                                                                            atom_embedder=self.atom_embedder)
         return  coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory
     
     def sort_ids(self, all_ids, all_order):
@@ -231,11 +237,11 @@ class Decoder(nn.Module):
         batch_idx = 0
         for atom_ids, ref_list in zip(ids, refs):
             for idx, bead in enumerate(atom_ids):
-                # print(idx, bead)
+                # if self.verbose: print(idx, bead)
                 if len(bead) == 1:
-                    print("\n start", atom_ids)
+                    if self.verbose: print("\n start", atom_ids)
                     bead.add(int(ref_list[idx].item()))
-                    print("update with reference", atom_ids)
+                    if self.verbose: print("update with reference", atom_ids)
                     progress[batch_idx] += 1
             batch_idx += 1
         lens = [sum([len(y) for y in x]) for x in ids]
@@ -253,14 +259,14 @@ class Decoder(nn.Module):
             d_squared = torch.sum((generated_coords[src] - generated_coords[dst]) ** 2, dim=1)
             geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2).unsqueeze(0))
             # geom_loss.append(torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2))
-        # print("          [AR Distance Loss Step]", geom_loss)
+        # if self.verbose: print("          [AR Distance Loss Step]", geom_loss)
         # if true_coords is not None:
         #     for a, b, c, d in zip (generated_coords_all, geom_loss, true_coords, dgl.unbatch(geometry_graphs)):
-        #         print("          Aligned MSE", a.shape, self.rmsd(a, c, align = True))
-        #         print("          Gen", a)
-        #         print("          True", c)
-        #         print("          distance", b)
-        #         print("          edges", d.edges())
+        #         if self.verbose: print("          Aligned MSE", a.shape, self.rmsd(a, c, align = True))
+        #         if self.verbose: print("          Gen", a)
+        #         if self.verbose: print("          True", c)
+        #         if self.verbose: print("          distance", b)
+        #         if self.verbose: print("          edges", d.edges())
         return torch.mean(torch.cat(geom_loss))
 
     def align(self, source, target):
@@ -291,6 +297,25 @@ class Decoder(nn.Module):
             true = self.align(true, generated)
         loss = self.mse_none(true, generated)
         return loss
+    
+    def get_reference(self, subgraph, molecule, ref_ids):
+        # references = []
+        result = []
+        info = [(m, x) for m, x in zip(dgl.unbatch(molecule), ref_ids) if x is not None]
+        for g, mid in zip(dgl.unbatch(subgraph), info):
+            m, id = mid
+            if id is None:
+                continue
+            r = id[0]
+            if r == -1:
+                # references.append(torch.zeros_like(g.ndata['x_cc']))
+                g.ndata['reference_point'] = torch.zeros_like(g.ndata['x_cc'])
+            else:
+                point = molecule.ndata['x_cc'][r].reshape(1,-1)
+                # references.append(point.repeat(g.ndata['x_cc'].shape[0]))
+                g.ndata['reference_point'] = point.repeat(g.ndata['x_cc'].shape[0], 1)
+            result.append(g)
+        return dgl.batch(result).to(self.device) #, references
 
     def ar_loss_step(self, coords, coords_ref, chunks, condition_coords, condition_coords_ref, chunk_condition, align = False):#, step = 1, first_step = 1):
         loss = []
@@ -314,19 +339,18 @@ class Decoder(nn.Module):
                 loss.append(masked_loss)
                 start_A += chunk_A
                 start_B += chunk_B
-                print("       unnormalized AR loss and A shape, B shape", masked_loss.cpu().item(), A.shape, B.shape)
+                if self.verbose: print("       unnormalized AR loss and A shape, B shape", masked_loss.cpu().item(), A.shape, B.shape)
         else:
             for chunk in chunks:
                 sub_loss = self.mse(coords[start: start + chunk, :], coords_ref[start:start+chunk, :], align).sum()
-                print("      unnormalized AR first step loss ", sub_loss.cpu().item(), coords[start: start + chunk, :].shape)
+                if self.verbose: print("      unnormalized AR first step loss ", sub_loss.cpu().item(), coords[start: start + chunk, :].shape)
                 if coords[start: start + chunk, :].shape[0] == 1 or sub_loss.cpu().item()>3:
-                    print("       ", coords[start: start + chunk, :], coords_ref[start: start + chunk, :])
+                    if self.verbose: print("       ", coords[start: start + chunk, :], coords_ref[start: start + chunk, :])
                 loss.append(sub_loss)
                 start += chunk
         return loss
     
     def forward(self, cg_mol_graph, rdkit_mol_graph, cg_frag_ids, true_geo_batch):
-        # ipdb.set_trace()
         rdkit_reference = copy.deepcopy(rdkit_mol_graph)
         X_cc, H_cc = self.channel_selection(cg_mol_graph, rdkit_mol_graph, cg_frag_ids)
         rdkit_mol_graph.ndata['x_cc'] = X_cc
@@ -335,7 +359,7 @@ class Decoder(nn.Module):
         ref = cg_mol_graph.ndata['bfs_reference_point'].flatten()
         X_cc = copy.deepcopy(X_cc.detach())
         H_cc = copy.deepcopy(H_cc.detach())
-        # ipdb.set_trace()
+
         bfs_order = []
         ref_order = []
         start = 0
@@ -343,15 +367,15 @@ class Decoder(nn.Module):
             bfs_order.append(bfs[start : start + i])
             ref_order.append(ref[start: start + i])
             start += i
-        # ipdb.set_trace()
+
         progress = rdkit_mol_graph.batch_num_nodes().cpu()
         total_num_atoms = rdkit_mol_graph.batch_num_nodes().cpu()
-        # print("progress", progress)
+        # if self.verbose: print("progress", progress)
         final_molecule = rdkit_mol_graph
         frag_ids = self.sort_ids(cg_frag_ids, bfs_order)
-        # print(frag_ids)
+        # if self.verbose: print(frag_ids)
         frag_ids, progress = self.add_reference(frag_ids, ref_order, progress) #done
-        # ipdb.set_trace()
+
         frag_batch = defaultdict(list) # keys will be time steps
         max_nodes = max(cg_mol_graph.batch_num_nodes()).item()
         for t in range(max_nodes):
@@ -360,6 +384,14 @@ class Decoder(nn.Module):
                 if t < len(frag):
                     ids = list(frag[t])
                 frag_batch[t].append(ids)
+        if self.double:
+            ref_batch = defaultdict(list)
+            for t in range(max_nodes):
+                for idx, refs in enumerate(ref_order): # iterate over moelcules
+                    ids = None
+                    if t < len(refs):
+                        ids = [int(refs[t].item())]
+                    ref_batch[t].append(ids)
 
         # ipdb.set_trace()
         current_molecule_ids = None
@@ -369,12 +401,16 @@ class Decoder(nn.Module):
         
         losses = [[] for _ in range(len(progress))]#torch.zeros_like(progress)
         loss_idx = list(range(len(progress)))
-        for t in range(max_nodes):
+        # for t in range(max_nodes):
+        for t in tqdm(range(max_nodes), desc='autoregressive time steps'):
             # ipdb.set_trace()
-            print("[Auto Regressive Step]")
+            if self.verbose: print("[Auto Regressive Step]")
             id_batch = frag_batch[t]
-            # print("ID", id_batch)
+            # if self.verbose: print("ID", id_batch)
             latent, geo_latent = self.isolate_next_subgraph(final_molecule, id_batch, true_geo_batch)
+            if self.double:
+                r_batch = ref_batch[t]
+                latent = self.get_reference(latent, final_molecule, r_batch)
             # if not check:
             #     current_molecule = self.adaptive_batching(current_molecule)
             # ipdb.set_trace()
@@ -385,11 +421,11 @@ class Decoder(nn.Module):
             model_predicted_B = current_molecule.ndata['x_cc'] if current_molecule is not None else None
             model_predicted_B_split = [x.ndata['x_cc'] for x in dgl.unbatch(current_molecule)] if current_molecule is not None else None
             gen_input = latent.ndata['x_cc']
-            # print("[AR step end] geom losses total from decoder", t, geom_losses)
+            # if self.verbose: print("[AR step end] geom losses total from decoder", t, geom_losses)
             dist_loss = self.distance_loss([x.ndata['x_cc'] for x in dgl.unbatch(latent)], geo_latent, [x.ndata['x_true'] for x in dgl.unbatch(latent)])
-            print()
+            if self.verbose: print()
             returns.append((coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory, id_batch, ref_coords_A, ref_coords_B, ref_coords_B_split, gen_input, model_predicted_B, model_predicted_B_split, dist_loss))
-            # print("ID Check", returns[0][6])
+            # if self.verbose: print("ID Check", returns[0][6])
                 # X_cc, H_cc = self.channel_selection(cg_mol_graph, rdkit_mol_graph, cg_frag_ids)
                 # coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory = self.autoregressive_step(latent, current_molecule, t, geo_latent, geo_current)
 
@@ -416,6 +452,6 @@ class Decoder(nn.Module):
         # ipdb.set_trace()
         for idx, natoms in enumerate(total_num_atoms):
             losses[idx] = (sum(losses[idx])/natoms).unsqueeze(0)
-            print("[Final AR Loss]", natoms, losses[idx])
+            if self.verbose: print("[Final AR Loss]", natoms, losses[idx])
         return final_molecule, rdkit_reference, returns, (X_cc, H_cc), torch.cat(losses).mean()
 

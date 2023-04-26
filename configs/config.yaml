@@ -7,12 +7,12 @@ defaults:
   - losses: base
   - data: base
 
-coordinates: delta #absolute # or delta or double?
+coordinates: delta #absolute # or delta or double
 
 hydra:
   job:
     env_set: 
-      CUDA_VISIBLE_DEVICES: 0
+      CUDA_VISIBLE_DEVICES: 9
   run:
     dir: outputs/${wandb.name}_${now:%Y-%m-%d_%H-%M-%S}
   job_logging:
@@ -33,5 +33,5 @@ hydra:
 
 wandb:
   project: MCG
-  name: gcp_vae_test_10k
-  notes: MSE + VAE 1e-3 with 10 bit budget
+  name: local_vae_double_test
+  notes: testing double delta locally

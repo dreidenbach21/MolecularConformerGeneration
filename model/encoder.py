@@ -225,7 +225,7 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
         h_feats_A = torch.cat([h_feats_A, rand_h_A], dim=1)
         h_feats_B = torch.cat([h_feats_B, rand_h_B], dim=1)
 
-        # random noise:
+        # random noise: #! I do not think we should be adding noise
         if self.noise_initial > 0:
             noise_level = self.noise_initial * self.noise_decay_rate ** (epoch + 1)
             h_feats_A = h_feats_A + noise_level * torch.randn_like(h_feats_A)
@@ -250,8 +250,8 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
         coarse_mask = get_mask(A_cg.batch_num_nodes(), B_cg.batch_num_nodes(), self.device)
         # print("Coarse Mask", coarse_mask)
 
-        full_trajectory = [coords_A.detach().cpu()]
-        full_trajectory_cg = [A_cg.ndata['x'].detach().cpu()]
+        # full_trajectory = [coords_A.detach().cpu()]
+        # full_trajectory_cg = [A_cg.ndata['x'].detach().cpu()]
         geom_losses, geom_losses_cg = 0, 0
         for i, layer in enumerate(self.fine_grain_layers):
             # Fine Grain Layer
@@ -307,15 +307,15 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
                                 pool_feats_A=h_feats_A_pool,
                                 pool_feats_B=h_feats_B_pool)
             # if not self.separate_lig:
-            geom_losses = geom_losses + geom_loss
-            geom_losses_cg = geom_losses_cg + geom_loss_cg
-            full_trajectory.extend(trajectory)
-            full_trajectory_cg.extend(trajectory_cg)
+            # geom_losses = geom_losses + geom_loss
+            # geom_losses_cg = geom_losses_cg + geom_loss_cg
+            # full_trajectory.extend(trajectory)
+            # full_trajectory_cg.extend(trajectory_cg)
         # return (coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory), (coords_A_cg, h_feats_A_cg, coords_B_cg, h_feats_B_cg, geom_losses_cg, full_trajectory_cg)
-        if prior_only:
-            return None, (v_B_cg, h_feats_B_cg), None, None, None, None
+        # if prior_only:
+        #     return None, (v_B_cg, h_feats_B_cg), None, None, None, None
 
-        return (v_A_cg, h_feats_A_cg), (v_B_cg, h_feats_B_cg), geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg
+        return (v_A_cg, h_feats_A_cg), (v_B_cg, h_feats_B_cg), 0, 0, [], [] #geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg
 
     def __repr__(self):
         return "ECN " + str(self.__dict__)

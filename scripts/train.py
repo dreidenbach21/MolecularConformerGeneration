@@ -37,12 +37,12 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     suffix = f"_{now.strftime('%m-%d_%H-%M-%S')}"
     coordinate_type = cfg.coordinates
     NAME = cfg.wandb['name'] + suffix
-    wandb.init(
-        project=cfg.wandb.project,
-        name=NAME,
-        notes=cfg.wandb.notes,
-        config = cfg
-    )
+    # wandb.init(
+    #     project=cfg.wandb.project,
+    #     name=NAME,
+    #     notes=cfg.wandb.notes,
+    #     config = cfg
+    # )
     train_loader, train_data, val_loader, val_data = load_data(cfg.data)
     F = cfg.encoder["coord_F_dim"]
     D = cfg.encoder["latent_dim"]
@@ -76,7 +76,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     kl_annealing_interval = 1
     kl_cap = 1e-3
     for epoch in range(cfg.data['epochs']):
-        print("\n\n\n\n\nEpoch", epoch)
+        print("Epoch", epoch)
         if kl_annealing and epoch > 0 and epoch % kl_annealing_interval == 0:
             kl_weight += kl_annealing_rate
             kl_weight = min(kl_weight, kl_cap)
@@ -85,7 +85,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
         train_loss_log, val_loss_log = [], []
         for A_batch, B_batch in train_loader:
             A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
-            B_graph, geo_B, Bp, B_cg, geo_B_cg = B_batch
+            B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids = B_batch
 
             A_graph, geo_A, Ap, A_cg, geo_A_cg = A_graph.to('cuda:0'), geo_A.to(
                 'cuda:0'), Ap.to('cuda:0'), A_cg.to('cuda:0'), geo_A_cg.to('cuda:0')
@@ -94,13 +94,14 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
 
             generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss = model(
                 frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg, epoch=epoch)
-        # ipdb.set_trace()
+            ipdb.set_trace()
             loss, losses = model.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, AR_loss, step=epoch)
             # train_loss_log.append(losses)
+            ipdb.set_trace()
             print(f"Train LOSS = {loss}")
             loss.backward()
             losses['Train Loss'] = loss.cpu()
-            wandb.log(losses)
+            # wandb.log(losses)
 
             for name, p in model.named_parameters():
                 if p.requires_grad and p.grad is not None and (torch.isnan(p.grad).any() or torch.isnan(p.data).any()):
@@ -131,15 +132,15 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
         #   model.flip_teacher_forcing()
             for A_batch, B_batch in val_loader:
                 A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
-                B_graph, geo_B, Bp, B_cg, geo_B_cg = B_batch
+                B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids = B_batch
 
                 A_graph, geo_A, Ap, A_cg, geo_A_cg = A_graph.to('cuda:0'), geo_A.to('cuda:0'), Ap.to('cuda:0'), A_cg.to('cuda:0'), geo_A_cg.to('cuda:0')
                 B_graph, geo_B, Bp, B_cg, geo_B_cg = B_graph.to('cuda:0'), geo_B.to('cuda:0'), Bp.to('cuda:0'), B_cg.to('cuda:0'), geo_B_cg.to('cuda:0')
 
                 generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss = model(
-                        frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg, epoch=epoch)
+                        B_frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg, epoch=epoch, validation = True)
                 # ipdb.set_trace()
-                loss, losses = model.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, AR_loss, step=epoch)
+                loss, losses = model.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, AR_loss, step=epoch, log_latent_stats = False)
                 # train_loss_log.append(losses)
                 losses['Val Loss'] = loss.cpu()
                 wandb.log({'val_' + key: value for key, value in losses.items()})

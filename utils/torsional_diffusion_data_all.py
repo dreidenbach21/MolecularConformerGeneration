@@ -141,6 +141,7 @@ def featurize_mol(mol, types=drugs_types, use_rdkit_coords = False, seed = 0, ra
     
     conf = mol.GetConformer()
     true_lig_coords = conf.GetPositions()
+    # import ipdb; ipdb.set_trace()
 #     use_rdkit_coords = True
     if use_rdkit_coords:
         rdkit_coords = get_rdkit_coords(mol, seed) #.numpy()
@@ -280,12 +281,16 @@ def get_transformation_mask(mol, pyg_data = None):
     return mask_edges, mask_rotate
 
 class ConformerDataset(DGLDataset):
+    # def __init__(self, root, split_path, mode, types, dataset, num_workers=1, limit_molecules=None,
+    #              cache_path=None, pickle_dir=None, boltzmann_resampler=None, raw_dir='/home/dannyreidenbach/data/dgl', save_dir='/home/dannyreidenbach/data/dgl',
+    #              force_reload=False, verbose=False, transform=None, name = "qm9",
+    #              invariant_latent_dim = 64, equivariant_latent_dim = 32, use_diffusion_angle_def = False):
     def __init__(self, root, split_path, mode, types, dataset, num_workers=1, limit_molecules=None,
-                 cache_path=None, pickle_dir=None, boltzmann_resampler=None, raw_dir='/home/dannyreidenbach/data/dgl', save_dir='/home/dannyreidenbach/data/dgl',
+                 cache_path=None, pickle_dir=None, boltzmann_resampler=None, raw_dir='/home/dreidenbach/data/dgl', save_dir='/home/dreidenbach/data/dgl',
                  force_reload=False, verbose=False, transform=None, name = "qm9",
                  invariant_latent_dim = 64, equivariant_latent_dim = 32, use_diffusion_angle_def = False):
         # part of the featurisation and filtering code taken from GeoMol https://github.com/PattanaikL/GeoMol
-#         super(ConformerDataset, self).__init__(name, transform)
+#         super(ConformerDataset, self).__init__(name, transform) /home/dreidenbach/data
         self.D = invariant_latent_dim
         self.F = equivariant_latent_dim
         self.root = root
@@ -343,18 +348,25 @@ class ConformerDataset(DGLDataset):
         datapoints = []
         if num_workers > 1:
             results = []
-            with mp.Pool(num_workers) as pool:
-                results = list(tqdm(pool.imap_unordered(self.filter_smiles_mp, smiles), total=len(smiles)))
-            datapoints = [item for sublist in results for item in sublist if sublist[0] is not None]
-            
-            
-            # with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
-            #     future_results = [executor.submit(self.filter_smiles_mp, s) for s in smiles]
-
-            #     for future in tqdm(concurrent.futures.as_completed(future_results), total=len(future_results)):
-            #         result = future.result()
-            #         results.append(result)
+            # with mp.Pool(num_workers) as pool:
+            #     # results = list(tqdm(pool.imap_unordered(self.filter_smiles_mp, smiles), total=len(smiles)))
+            #     results = pool.map_async(self.filter_smiles_mp, smiles)
+            #     pool.close()
+            #     # wait for all tasks to complete and processes to close
+            #     pool.join()
             # datapoints = [item for sublist in results for item in sublist if sublist[0] is not None]
+            
+            
+            # with mp.Pool(num_workers) as pool:
+            #     results = pool.map_async(self.filter_smiles_mp, smiles, timeout = 120)
+            #     # wait for all tasks to complete and processes to close
+            #     results.wait()
+            #     # pool.close()
+            #     # pool.join()
+                
+            # datapoints = [item for sublist in results.get() for item in sublist if sublist[0] is not None]
+            
+
             
         else:
             if num_workers > 1:
@@ -376,6 +388,7 @@ class ConformerDataset(DGLDataset):
         
     def filter_smiles_mp(self, smile):
         # print(f'RAM Memory % used: {psutil.virtual_memory()[2]}')
+        # print(smile)
         if type(smile) is tuple:
             pickle_id, smile = smile
             current_id, current_pickle = self.current_pickle
@@ -417,7 +430,7 @@ class ConformerDataset(DGLDataset):
 
         mol = mol_dic['conformers'][0]['rd_mol']
         
-        xc = mol.GetConformer().GetPositions()
+        # xc = mol.GetConformer().GetPositions()
         # print("filter mol POS", mol.GetConformer().GetPositions())
         N = mol.GetNumAtoms()
         if not mol.HasSubstructMatch(dihedral_pattern):
@@ -496,7 +509,7 @@ class ConformerDataset(DGLDataset):
     #         data.edge_mask = torch.tensor(edge_mask)
     #         data.mask_rotate = mask_rotate
 #             return ((data, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids), (data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg))
-            results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg))
+            results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids))
         assert(len(results_A) == len(results_B))
         bad_idx = set(bad_idx_A) | set(bad_idx_B)
         results_A = [x for idx, x in enumerate(results_A) if idx not in bad_idx]
@@ -546,7 +559,7 @@ class ConformerDataset(DGLDataset):
 
         mol = mol_dic['conformers'][0]['rd_mol']
         
-        xc = mol.GetConformer().GetPositions()
+        # xc = mol.GetConformer().GetPositions()
         # print("filter mol POS", mol.GetConformer().GetPositions())
         N = mol.GetNumAtoms()
         if not mol.HasSubstructMatch(dihedral_pattern):
@@ -609,7 +622,7 @@ class ConformerDataset(DGLDataset):
     #         data.edge_mask = torch.tensor(edge_mask)
     #         data.mask_rotate = mask_rotate
 #             return ((data, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids), (data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg))
-            results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg))
+            results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids))
         try:
             assert(len(results_A) == len(results_B))
         except:
@@ -646,8 +659,8 @@ class ConformerDataset(DGLDataset):
         graphs, infos = [], []
         for A, B in self.datapoints:
             data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids = A
-            data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg = B
-            infos.append(A_frag_ids)
+            data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids = B
+            infos.append((A_frag_ids, B_frag_ids))
             graphs.extend([data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg])
         dgl.data.utils.save_info(self.save_dir + f'/{self.name}_infos.bin', infos)
         dgl.data.utils.save_graphs(self.save_dir + f'/{self.name}_graphs.bin', graphs)
@@ -660,12 +673,12 @@ class ConformerDataset(DGLDataset):
         results_A, results_B = [], []
         for i in range(0, len(graphs), 10):
             AB = graphs[i: i+10]
-            A_frag_ids = info[count]
+            A_frag_ids, B_frag_ids = info[count]
             count += 1
             data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg = AB[:5]
             data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg = AB[5:]
             results_A.append((data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids))
-            results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg))
+            results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids))
         self.datapoints = [(a,b) for a,b in zip(results_A, results_B)]
         print("Loaded Successfully",  self.save_dir, self.name, len(self.datapoints))
     
@@ -681,7 +694,7 @@ class ConformerDataset(DGLDataset):
             dic = pickle.load(f)
         return dic
 
-    def featurize_mol(self, mol_dic, use_rdkit_coords = False):
+    def featurize_mol(self, mol_dic, use_rdkit_coords = False, limit = 5):
         confs = mol_dic['conformers']
         name = mol_dic["smiles"]
 
@@ -691,7 +704,9 @@ class ConformerDataset(DGLDataset):
         pos = []
         # weights = []
         datas = []
-        for conf in confs:
+        for idx, conf in enumerate(confs):
+            if limit > 0 and idx >= limit:
+                break
             mol = conf['rd_mol']
 
             # filter for conformers that may have reacted
@@ -710,9 +725,9 @@ class ConformerDataset(DGLDataset):
             correct_mol = mol
             mol_features = featurize_mol(correct_mol, self.types, use_rdkit_coords = use_rdkit_coords)
             datas.append(mol_features)
-            if self.boltzmann_resampler is not None:
-                # torsional Boltzmann generator uses only the local structure of the first conformer
-                break
+            # if self.boltzmann_resampler is not None:
+            #     # torsional Boltzmann generator uses only the local structure of the first conformer
+            #     break
 #             if True:
 #                 break #! only look at first of the dataset for now since we only need 1. Causes distance issues otherwise
 
@@ -759,17 +774,17 @@ def collate(samples):
     Bp = dgl.batch([x[2] for x in B])
     B_cg = dgl.batch([x[3] for x in B])
     geo_B_cg = dgl.batch([x[4] for x in B])
-    return (A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids), (B_graph, geo_B, Bp, B_cg, geo_B_cg)
+    B_frag_ids = [x[5] for x in B]
+    return (A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids), (B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids)
 
-def load_torsional_data(batch_size = 32, mode = 'train', data_dir='/home/dannyreidenbach/data/QM9/qm9/',
-                dataset='qm9', limit_mols=0, log_dir='./test_run', num_workers=1, restart_dir=None, seed=0,
-                 split_path='/home/dannyreidenbach/data/QM9/split.npy',
-                 std_pickles=None):
-# def load_torsional_data(batch_size = 32, mode = 'train', data_dir='/home/dreidenbach/data/torsional_diffusion/QM9/qm9/',
+# def load_torsional_data(batch_size = 32, mode = 'train', data_dir='/home/dannyreidenbach/data/QM9/qm9/',
 #                 dataset='qm9', limit_mols=0, log_dir='./test_run', num_workers=1, restart_dir=None, seed=0,
-#                  split_path='/home/dreidenbach/data/torsional_diffusion/QM9/split.npy',
+#                  split_path='/home/dannyreidenbach/data/QM9/split.npy',
 #                  std_pickles=None):
-                #   std_pickles='/home/dannyreidenbach/data/QM9/standardized_pickles'):
+def load_torsional_data(batch_size = 32, mode = 'train', data_dir='/home/dreidenbach/data/torsional_diffusion/QM9/qm9/',
+                dataset='qm9', limit_mols=0, log_dir='./test_run', num_workers=1, restart_dir=None, seed=0,
+                 split_path='/home/dreidenbach/data/torsional_diffusion/QM9/split.npy',
+                 std_pickles=None): #   std_pickles='/home/dannyreidenbach/data/QM9/standardized_pickles'):
     types = qm9_types if dataset == 'qm9' else drugs_types
     use_diffusion_angle_def = False
     data = ConformerDataset(data_dir, split_path, mode, dataset=dataset,

@@ -471,24 +471,53 @@ def get_coords(rd_mol):
     return np.asarray(Z)
 
 def get_rdkit_coords(mol, seed = None):
-    ps = AllChem.ETKDGv2()
-    if seed is not None:
-        ps.randomSeed = seed
-    id = AllChem.EmbedMolecule(mol, ps)
-    if id == -1:
+    # ps = AllChem.ETKDGv2()
+    # if seed is not None:
+    #     ps.randomSeed = seed
+    # id = AllChem.EmbedMolecule(mol, ps)
+    id = AllChem.EmbedMultipleConfs(mol, numConfs=1)#, randomSeed=10)
+    try:
+        id = list(id)
+    except:
+        print(id, len(list(id)))
+        import ipdb; ipdb.set_trace()
+    # if id == -1:
+    if len(id) == 0:
         #print('rdkit coords could not be generated without using random coords. using random coords now.')
-        ps.useRandomCoords = True
-        AllChem.EmbedMolecule(mol, ps)
+        AllChem.EmbedMultipleConfs(mol, numConfs=1, useRandomCoords = True)
         try:
-            AllChem.MMFFOptimizeMolecule(mol, confId=0)
+            # AllChem.MMFFOptimizeMolecule(mol, confId=0)
+            AllChem.MMFFOptimizeMoleculeConfs(mol, mmffVariant='MMFF94s')
         except:
-            # print("RDKit cannot generate conformer for: ", Chem.MolToSmiles(mol))
+            print("RDKit cannot generate conformer for: ", Chem.MolToSmiles(mol))
             return None
     else:
-        AllChem.MMFFOptimizeMolecule(mol, confId=0)
+        # AllChem.MMFFOptimizeMolecule(mol, confId=0)
+        AllChem.MMFFOptimizeMoleculeConfs(mol, mmffVariant='MMFF94s')
     conf = mol.GetConformer()
     lig_coords = conf.GetPositions()
     return np.asarray(lig_coords) #, dtype=torch.float32)
+
+# def get_rdkit_coords(mol, seed = None):
+#     ps = AllChem.ETKDGv2()
+#     if seed is not None:
+#         ps.randomSeed = seed
+#     id = AllChem.EmbedMolecule(mol, ps)
+#     import ipdb; ipdb.set_trace()
+#     if id == -1:
+#         #print('rdkit coords could not be generated without using random coords. using random coords now.')
+#         ps.useRandomCoords = True
+#         AllChem.EmbedMolecule(mol, ps)
+#         try:
+#             AllChem.MMFFOptimizeMolecule(mol, confId=0)
+#         except:
+#             # print("RDKit cannot generate conformer for: ", Chem.MolToSmiles(mol))
+#             return None
+#     else:
+#         AllChem.MMFFOptimizeMolecule(mol, confId=0)
+#     conf = mol.GetConformer()
+#     lig_coords = conf.GetPositions()
+#     return np.asarray(lig_coords) #, dtype=torch.float32)
 
 from rdkit.Chem.rdchem import BondType as BT
 def get_bond(m, i, j):

@@ -33,3 +33,4 @@ device: 'cuda'
 
 teacher_forcing: True
 cc_norm: 'ln'
+verbose: False

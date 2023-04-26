@@ -347,10 +347,10 @@ class Fine_Grain_Layer(nn.Module):
                     geometry_graph_A.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),
                                               fn.sum('partial_grads_msg', 'grad_x_evolved'))
                     grad_x_evolved = geometry_graph_A.ndata['grad_x_evolved']
-                    print("     [ENC Fine DR] distance reg delta A", torch.min(self.geometry_reg_step_size * grad_x_evolved).item(), torch.max(self.geometry_reg_step_size * grad_x_evolved).item())
-                    print("     [ENC Fine DR] distance reg start A", torch.min(x_evolved_A).item(), torch.max(x_evolved_A).item())
+                    # print("     [ENC Fine DR] distance reg delta A", torch.min(self.geometry_reg_step_size * grad_x_evolved).item(), torch.max(self.geometry_reg_step_size * grad_x_evolved).item())
+                    # print("     [ENC Fine DR] distance reg start A", torch.min(x_evolved_A).item(), torch.max(x_evolved_A).item())
                     x_evolved_A = x_evolved_A + self.geometry_reg_step_size * grad_x_evolved
-                    print("     [ENC Fine DR] distance reg update A", torch.min(x_evolved_A).item(), torch.max(x_evolved_A).item())
+                    # print("     [ENC Fine DR] distance reg update A", torch.min(x_evolved_A).item(), torch.max(x_evolved_A).item())
                     if self.save_trajectories:
                         trajectory.append(x_evolved_A.detach().cpu())
 
@@ -364,17 +364,17 @@ class Fine_Grain_Layer(nn.Module):
                     geometry_graph_B.edata['partial_grads'] = 2 * (d_squared - geometry_graph_B.edata['feat'] ** 2)[:,None] * grad_d_squared
                     geometry_graph_B.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),fn.sum('partial_grads_msg', 'grad_x_evolved'))
                     grad_x_evolved = geometry_graph_B.ndata['grad_x_evolved']
-                    print("     [ENC Fine DR] distance reg delta B", torch.min(self.geometry_reg_step_size * grad_x_evolved).item(), torch.max(self.geometry_reg_step_size * grad_x_evolved).item())
-                    print("     [ENC Fine DR] distance reg start B", torch.min(x_evolved_B).item(), torch.max(x_evolved_B).item())
+                    # print("     [ENC Fine DR] distance reg delta B", torch.min(self.geometry_reg_step_size * grad_x_evolved).item(), torch.max(self.geometry_reg_step_size * grad_x_evolved).item())
+                    # print("     [ENC Fine DR] distance reg start B", torch.min(x_evolved_B).item(), torch.max(x_evolved_B).item())
                     x_evolved_B = x_evolved_B + self.geometry_reg_step_size * grad_x_evolved
-                    print("     [ENC Fine DR] distance reg update B", torch.min(x_evolved_B).item(), torch.max(x_evolved_B).item())
+                    # print("     [ENC Fine DR] distance reg update B", torch.min(x_evolved_B).item(), torch.max(x_evolved_B).item())
                     
-            if self.debug:
-                log(torch.max(A_graph.ndata['aggr_msg'].abs()), 'data[aggr_msg]: \sum_j m_{i->j} ')
-                # if self.A_evolve:
-                log(torch.max(A_graph.ndata['x_update'].abs()),
-                    'data[x_update] : \sum_j (x_i - x_j) * \phi^x(m_{i->j})')
-                log(torch.max(x_evolved_A.abs()), 'x_i new = x_evolved_A : x_i + data[x_update]')
+            # if self.debug:
+            #     log(torch.max(A_graph.ndata['aggr_msg'].abs()), 'data[aggr_msg]: \sum_j m_{i->j} ')
+            #     # if self.A_evolve:
+            #     log(torch.max(A_graph.ndata['x_update'].abs()),
+            #         'data[x_update] : \sum_j (x_i - x_j) * \phi^x(m_{i->j})')
+            #     log(torch.max(x_evolved_A.abs()), 'x_i new = x_evolved_A : x_i + data[x_update]')
 
             input_node_upd_A = torch.cat((self.node_norm(A_graph.ndata['feat']),
                                                A_graph.ndata['aggr_msg'],
@@ -395,13 +395,13 @@ class Fine_Grain_Layer(nn.Module):
                 node_upd_A = self.node_mlp_A(input_node_upd_A) # phi^h
                 node_upd_B = self.node_mlp_B(input_node_upd_B)
 
-            if self.debug:
-                log('node_mlp params')
-                for p in self.node_mlp_B.parameters():
-                    log(torch.max(p.abs()), 'max node_mlp_params')
-                    log(torch.min(p.abs()), 'min of abs node_mlp_params')
-                log(torch.max(input_node_upd_A.abs()), 'concat(h_i, aggr_msg, aggr_cross_msg)')
-                log(torch.max(node_upd_A), 'h_i new = h_i + MLP(h_i, aggr_msg, aggr_cross_msg)')
+            # if self.debug:
+            #     log('node_mlp params')
+            #     for p in self.node_mlp_B.parameters():
+            #         log(torch.max(p.abs()), 'max node_mlp_params')
+            #         log(torch.min(p.abs()), 'min of abs node_mlp_params')
+            #     log(torch.max(input_node_upd_A.abs()), 'concat(h_i, aggr_msg, aggr_cross_msg)')
+            #     log(torch.max(node_upd_A), 'h_i new = h_i + MLP(h_i, aggr_msg, aggr_cross_msg)')
 
             node_upd_A = apply_norm(A_graph, node_upd_A, self.final_h_layer_norm, self.final_h_layernorm_layer_A)
             node_upd_B = apply_norm(B_graph, node_upd_B, self.final_h_layer_norm, self.final_h_layernorm_layer_B)
@@ -672,64 +672,64 @@ class Pooling_3D_Layer(nn.Module):
             A_pool.update_all(fn.copy_e('msg', 'm'), fn.mean('m', 'aggr_msg'))#copy_edge
             B_pool.update_all(fn.copy_e('msg', 'm'), fn.mean('m', 'aggr_msg'))
 
-            trajectory = []
-            # Done: Set up the following regularization for CG only
-            if self.save_trajectories: trajectory.append(x_evolved_A.detach().cpu()[-N,:])
-            if False and self.loss_geometry_regularization:
-                x_evolved_A_coarse = x_evolved_A[-N:,:]
-                src, dst = geometry_graph_A.edges()
-                src = src.long()
-                dst = dst.long()
-                d_squared = torch.sum((x_evolved_A_coarse[src] - x_evolved_A_coarse[dst]) ** 2, dim=1)
-                geom_loss = torch.sum((d_squared - geometry_graph_A.edata['feat'] ** 2) ** 2)
+            # trajectory = []
+            # # Done: Set up the following regularization for CG only
+            # if self.save_trajectories: trajectory.append(x_evolved_A.detach().cpu()[-N,:])
+            # if False and self.loss_geometry_regularization:
+            #     x_evolved_A_coarse = x_evolved_A[-N:,:]
+            #     src, dst = geometry_graph_A.edges()
+            #     src = src.long()
+            #     dst = dst.long()
+            #     d_squared = torch.sum((x_evolved_A_coarse[src] - x_evolved_A_coarse[dst]) ** 2, dim=1)
+            #     geom_loss = torch.sum((d_squared - geometry_graph_A.edata['feat'] ** 2) ** 2)
 
-                x_evolved_B_coarse = x_evolved_B[-N:,:]
-                src, dst = geometry_graph_B.edges()
-                src = src.long()
-                dst = dst.long()
-                d_squared = torch.sum((x_evolved_B_coarse[src] - x_evolved_B_coarse[dst]) ** 2, dim=1)
-                geom_loss += torch.sum((d_squared - geometry_graph_B.edata['feat'] ** 2) ** 2)
-            else:
-                geom_loss = 0
-            if False and self.geometry_regularization:
-                x_evolved_A_coarse = x_evolved_A[-N:,:]
-                src, dst = geometry_graph_A.edges()
-                src = src.long()
-                dst = dst.long()
-                for step in range(self.geom_reg_steps):
-                    d_squared = torch.sum((x_evolved_A_coarse[src] - x_evolved_A_coarse[dst]) ** 2, dim=1)
-                    Loss = torch.sum((d_squared - geometry_graph_A.edata['feat'] ** 2)**2) # this is the loss whose gradient we are calculating here
-                    grad_d_squared = 2 * (x_evolved_A_coarse[src] - x_evolved_A_coarse[dst])
-                    geometry_graph_A.edata['partial_grads'] = 2 * (d_squared - geometry_graph_A.edata['feat'] ** 2)[:,None] * grad_d_squared
-                    geometry_graph_A.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),
-                                              fn.sum('partial_grads_msg', 'grad_x_evolved'))
-                    grad_x_evolved = geometry_graph_A.ndata['grad_x_evolved']
-                    x_evolved_A_coarse = x_evolved_A_coarse + self.geometry_reg_step_size * grad_x_evolved
-                    print("     [ENC Coarse DR] distance reg delta A", torch.min(self.geometry_reg_step_size * grad_x_evolved).item(), torch.max(self.geometry_reg_step_size * grad_x_evolved).item())
-                    print("     [ENC Coarse DR] distance reg start A", torch.min(x_evolved_A_coarse).item(), torch.max(x_evolved_A_coarse).item())
-                    x_evolved_A_coarse = x_evolved_A_coarse + self.geometry_reg_step_size * grad_x_evolved
-                    print("     [ENC Coarse DR] distance reg update A", torch.min(x_evolved_A_coarse).item(), torch.max(x_evolved_A_coarse).item())
-                    if self.save_trajectories:
-                        trajectory.append(x_evolved_A_coarse.detach().cpu())
-                x_evolved_A[-N:, :] = x_evolved_A_coarse
+            #     x_evolved_B_coarse = x_evolved_B[-N:,:]
+            #     src, dst = geometry_graph_B.edges()
+            #     src = src.long()
+            #     dst = dst.long()
+            #     d_squared = torch.sum((x_evolved_B_coarse[src] - x_evolved_B_coarse[dst]) ** 2, dim=1)
+            #     geom_loss += torch.sum((d_squared - geometry_graph_B.edata['feat'] ** 2) ** 2)
+            # else:
+            #     geom_loss = 0
+            # if False and self.geometry_regularization:
+            #     x_evolved_A_coarse = x_evolved_A[-N:,:]
+            #     src, dst = geometry_graph_A.edges()
+            #     src = src.long()
+            #     dst = dst.long()
+            #     for step in range(self.geom_reg_steps):
+            #         d_squared = torch.sum((x_evolved_A_coarse[src] - x_evolved_A_coarse[dst]) ** 2, dim=1)
+            #         Loss = torch.sum((d_squared - geometry_graph_A.edata['feat'] ** 2)**2) # this is the loss whose gradient we are calculating here
+            #         grad_d_squared = 2 * (x_evolved_A_coarse[src] - x_evolved_A_coarse[dst])
+            #         geometry_graph_A.edata['partial_grads'] = 2 * (d_squared - geometry_graph_A.edata['feat'] ** 2)[:,None] * grad_d_squared
+            #         geometry_graph_A.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),
+            #                                   fn.sum('partial_grads_msg', 'grad_x_evolved'))
+            #         grad_x_evolved = geometry_graph_A.ndata['grad_x_evolved']
+            #         x_evolved_A_coarse = x_evolved_A_coarse + self.geometry_reg_step_size * grad_x_evolved
+            #         print("     [ENC Coarse DR] distance reg delta A", torch.min(self.geometry_reg_step_size * grad_x_evolved).item(), torch.max(self.geometry_reg_step_size * grad_x_evolved).item())
+            #         print("     [ENC Coarse DR] distance reg start A", torch.min(x_evolved_A_coarse).item(), torch.max(x_evolved_A_coarse).item())
+            #         x_evolved_A_coarse = x_evolved_A_coarse + self.geometry_reg_step_size * grad_x_evolved
+            #         print("     [ENC Coarse DR] distance reg update A", torch.min(x_evolved_A_coarse).item(), torch.max(x_evolved_A_coarse).item())
+            #         if self.save_trajectories:
+            #             trajectory.append(x_evolved_A_coarse.detach().cpu())
+            #     x_evolved_A[-N:, :] = x_evolved_A_coarse
 
-                x_evolved_B_coarse = x_evolved_B[-N:,:]
-                src, dst = geometry_graph_B.edges()
-                src = src.long()
-                dst = dst.long()
-                for step in range(self.geom_reg_steps):
-                    d_squared = torch.sum((x_evolved_B_coarse[src] - x_evolved_B_coarse[dst]) ** 2, dim=1)
-                    Loss = torch.sum((d_squared - geometry_graph_B.edata['feat'] ** 2)**2) # this is the loss whose gradient we are calculating here
-                    grad_d_squared = 2 * (x_evolved_B_coarse[src] - x_evolved_B_coarse[dst])
-                    geometry_graph_B.edata['partial_grads'] = 2 * (d_squared - geometry_graph_B.edata['feat'] ** 2)[:,None] * grad_d_squared
-                    geometry_graph_B.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),fn.sum('partial_grads_msg', 'grad_x_evolved'))
-                    grad_x_evolved = geometry_graph_B.ndata['grad_x_evolved']
-                    print("     [ENC Coarse DR] distance reg delta B", torch.min(self.geometry_reg_step_size * grad_x_evolved).item(), torch.max(self.geometry_reg_step_size * grad_x_evolved).item())
-                    print("     [ENC Coarse DR] distance reg start B", torch.min(x_evolved_B_coarse).item(), torch.max(x_evolved_B_coarse).item())
-                    x_evolved_B_coarse = x_evolved_B_coarse + self.geometry_reg_step_size * grad_x_evolved
-                    print("     [ENC Coarse DR] distance reg update B", torch.min(x_evolved_B_coarse).item(), torch.max(x_evolved_B_coarse).item())
+            #     x_evolved_B_coarse = x_evolved_B[-N:,:]
+            #     src, dst = geometry_graph_B.edges()
+            #     src = src.long()
+            #     dst = dst.long()
+            #     for step in range(self.geom_reg_steps):
+            #         d_squared = torch.sum((x_evolved_B_coarse[src] - x_evolved_B_coarse[dst]) ** 2, dim=1)
+            #         Loss = torch.sum((d_squared - geometry_graph_B.edata['feat'] ** 2)**2) # this is the loss whose gradient we are calculating here
+            #         grad_d_squared = 2 * (x_evolved_B_coarse[src] - x_evolved_B_coarse[dst])
+            #         geometry_graph_B.edata['partial_grads'] = 2 * (d_squared - geometry_graph_B.edata['feat'] ** 2)[:,None] * grad_d_squared
+            #         geometry_graph_B.update_all(fn.copy_e('partial_grads', 'partial_grads_msg'),fn.sum('partial_grads_msg', 'grad_x_evolved'))
+            #         grad_x_evolved = geometry_graph_B.ndata['grad_x_evolved']
+            #         print("     [ENC Coarse DR] distance reg delta B", torch.min(self.geometry_reg_step_size * grad_x_evolved).item(), torch.max(self.geometry_reg_step_size * grad_x_evolved).item())
+            #         print("     [ENC Coarse DR] distance reg start B", torch.min(x_evolved_B_coarse).item(), torch.max(x_evolved_B_coarse).item())
+            #         x_evolved_B_coarse = x_evolved_B_coarse + self.geometry_reg_step_size * grad_x_evolved
+            #         print("     [ENC Coarse DR] distance reg update B", torch.min(x_evolved_B_coarse).item(), torch.max(x_evolved_B_coarse).item())
                     
-                x_evolved_B[-N:, :] = x_evolved_B_coarse
+            #     x_evolved_B[-N:, :] = x_evolved_B_coarse
 
             input_node_upd_A = torch.cat((self.node_norm(A_pool.ndata['feat']), A_pool.ndata['aggr_msg']), dim=-1)
                                             #    cross_attention_A_feat,
@@ -749,7 +749,7 @@ class Pooling_3D_Layer(nn.Module):
 
             node_upd_A = apply_norm(A_pool, node_upd_A, self.final_h_layer_norm, self.final_h_layernorm_layer_A)
             node_upd_B = apply_norm(B_pool, node_upd_B, self.final_h_layer_norm, self.final_h_layernorm_layer_B)
-            return x_evolved_A, node_upd_A, x_evolved_B, node_upd_B, trajectory, geom_loss
+            return x_evolved_A, node_upd_A, x_evolved_B, node_upd_B, None, 0 #trajectory, geom_loss
 
     def __repr__(self):
         return "Pooling 3D Layer " + str(self.__dict__)
@@ -1037,8 +1037,8 @@ class Coarse_Grain_3DLayer(nn.Module):
 
             A_graph.ndata['v_now'] = v_A
             B_graph.ndata['v_now'] = v_B
-            print("[Encoder Coarse] ecn input V A", torch.min(v_A).item(), torch.max(v_A).item())
-            print("[Encoder Coarse] ecn input V B", torch.min(v_B).item(), torch.max(v_B).item())
+            # print("[Encoder Coarse] ecn input V A", torch.min(v_A).item(), torch.max(v_A).item())
+            # print("[Encoder Coarse] ecn input V B", torch.min(v_B).item(), torch.max(v_B).item())
             A_graph.apply_edges(fn.u_sub_v('x_pool', 'x_pool', 'r_ij'))  # x_i - x_j
             B_graph.apply_edges(fn.u_sub_v('x_pool', 'x_pool', 'r_ij')) 
 
@@ -1084,12 +1084,12 @@ class Coarse_Grain_3DLayer(nn.Module):
             # v_evolved_B = self.B_vn_mlp_4(v_evolved_B_input)
             v_evolved_A = self.skip_weight_v * self.A_vn_mlp_4(v_evolved_A_input) + (1. - self.skip_weight_v) * v_A
             v_evolved_B = self.skip_weight_v * self.B_vn_mlp_4(v_evolved_A_input) + (1. - self.skip_weight_v) * v_B
-            print("[Encoder Coarse] ecn output V A", torch.min(v_evolved_A).item(), torch.max(v_evolved_A).item())
-            print("[Encoder Coarse] ecn output V B", torch.min(v_evolved_B).item(), torch.max(v_evolved_B).item())
-            if torch.isnan(v_evolved_A).any().item():
-                print("Encoder NaN")
-                ipdb.set_trace()
-                nans_here = self.A_vn_mlp_4(v_evolved_A_input)
+            # print("[Encoder Coarse] ecn output V A", torch.min(v_evolved_A).item(), torch.max(v_evolved_A).item())
+            # print("[Encoder Coarse] ecn output V B", torch.min(v_evolved_B).item(), torch.max(v_evolved_B).item())
+            # if torch.isnan(v_evolved_A).any().item():
+            #     print("Encoder NaN")
+            #     ipdb.set_trace()
+            #     nans_here = self.A_vn_mlp_4(v_evolved_A_input)
             return v_evolved_A, h_A, v_evolved_B, h_B
     #         # Equation 3: coordinate update
     #         A_graph.update_all(self.update_x_moment_A, fn.mean('m', 'x_update')) # phi_x coord_mlp
