@@ -82,8 +82,10 @@ def collate(samples):
     return (A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids), (B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids)
 
 class BenchmarkRunner():
-    def __init__(self, true_mols = '/home/dreidenbach/data/torsional_diffusion/QM9/test_mols.pkl', valid_mols = '/home/dreidenbach/data/torsional_diffusion/QM9/test_smiles.csv', n_workers = 1, dataset = 'qm9',
-                 D = 64, F = 32, save_dir = '/home/dreidenbach/data/torsional_diffusion/QM9', batch_size = 2000):
+    def __init__(self, true_mols = '/home/dannyreidenbach/data/QM9/test_mols.pkl', valid_mols = '/home/dannyreidenbach/data/QM9/test_smiles.csv', n_workers = 1, dataset = 'qm9',
+                 D = 64, F = 32, save_dir = '/home/dannyreidenbach/data/QM9/test_set', batch_size = 2000):
+    # def __init__(self, true_mols = '/home/dreidenbach/data/torsional_diffusion/QM9/test_mols.pkl', valid_mols = '/home/dreidenbach/data/torsional_diffusion/QM9/test_smiles.csv', n_workers = 1, dataset = 'qm9',
+    #              D = 64, F = 32, save_dir = '/home/dreidenbach/data/torsional_diffusion/QM9', batch_size = 2000):
         with open(true_mols, 'rb') as f:
             self.true_mols = pickle.load(f)
         self.threshold = np.arange(0, 2.5, .125)
@@ -91,7 +93,7 @@ class BenchmarkRunner():
         self.dataset = dataset
         self.n_workers = n_workers
         self.D, self.F = D, F
-        self.name = f'{dataset}_test_set_benchmark_fixed'
+        self.name = f'{dataset}_full'
         self.batch_size = batch_size
         self.only_alignmol = False
         self.save_dir = save_dir
@@ -123,6 +125,7 @@ class BenchmarkRunner():
         self.model_preds = defaultdict(list)
         self.problem_smiles = set()
         # import ipdb; ipdb.set_trace()
+        print("Buidling Test Set ...")
         for smi_idx, row in tqdm(self.test_data.iterrows(), total=len(self.test_data)):
             # if smi_idx < 950:
                 # continue
@@ -176,10 +179,10 @@ class BenchmarkRunner():
                     # A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
                     # A_cg = conditional_coarsen_3d(data, A_frag_ids, A_cg_map, A_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
                 geometry_graph_A = get_geometry_graph(mol)
-                err = check_distances(data, geometry_graph_A)
-                if err.item() > 1e-3:
-                    import ipdb; ipdb.set_trace()
-                    data = self.featurize_mol(mol_dic)
+                # err = check_distances(data, geometry_graph_A)
+                # if err.item() > 1e-3:
+                #     import ipdb; ipdb.set_trace()
+                #     data = self.featurize_mol(mol_dic)
                 Ap = create_pooling_graph(data, A_frag_ids)
                 geometry_graph_A_cg = get_coarse_geometry_graph(A_cg, A_cg_map)
                 results_A.append((data, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids))
@@ -219,10 +222,10 @@ class BenchmarkRunner():
                 geometry_graph_B = get_geometry_graph(mol)
                 Bp = create_pooling_graph(data_B, B_frag_ids)
                 geometry_graph_B_cg = get_coarse_geometry_graph(B_cg, B_cg_map)
-                err = check_distances(data_B, geometry_graph_B, True)
-                if err.item() > 1e-3:
-                    import ipdb; ipdb.set_trace()
-                    data_B = self.featurize_mol(mol_dic, use_rdkit_coords = True)
+                # err = check_distances(data_B, geometry_graph_B, True)
+                # if err.item() > 1e-3:
+                #     import ipdb; ipdb.set_trace()
+                #     data_B = self.featurize_mol(mol_dic, use_rdkit_coords = True)
                 results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids))
             try:
                 assert(len(results_A) == len(results_B))
@@ -290,7 +293,7 @@ class BenchmarkRunner():
         #     import ipdb; ipdb.set_trace()
         return datas
             
-    def generate(self, model, rdkit_only = False, save = True):
+    def generate(self, model, rdkit_only = False, save = False):
         if not rdkit_only:
             if save and os.path.exists(os.path.join(self.save_dir, f'{self.name}_random_weights_gen.bin')):
                 molecules, _ = dgl.data.utils.load_graphs(self.save_dir + f'/{self.name}_random_weights_gen.bin')
@@ -422,17 +425,7 @@ class BenchmarkRunner():
         for i, thresh in enumerate(self.threshold):
             coverage_recall_vals = [stat[i] for stat in coverage_recall] + [0] * self.num_failures
             coverage_precision_vals = [stat[i] for stat in coverage_precision] + [0] * self.num_failures
-            # wandb.log({
-            #     f'{thresh} Recall Coverage Mean': np.mean(coverage_recall_vals) * 100,
-            #     f'{thresh} Recall Coverage Median': np.median(coverage_recall_vals) * 100,
-            #     f'{thresh} Recall AMR Mean': np.nanmean(amr_recall),
-            #     f'{thresh} Recall AMR Median': np.nanmedian(amr_recall),
-            #     f'{thresh} Precision Coverage Mean': np.mean(coverage_precision_vals) * 100,
-            #     f'{thresh} Precision Coverage Median': np.median(coverage_precision_vals) * 100,
-            #     f'{thresh} Precision AMR Mean': np.nanmean(amr_precision),
-            #     f'{thresh} Precision AMR Median': np.nanmedian(amr_precision),
-            # })
-            print({
+            wandb.log({
                 f'{thresh} Recall Coverage Mean': np.mean(coverage_recall_vals) * 100,
                 f'{thresh} Recall Coverage Median': np.median(coverage_recall_vals) * 100,
                 f'{thresh} Recall AMR Mean': np.nanmean(amr_recall),
@@ -442,7 +435,17 @@ class BenchmarkRunner():
                 f'{thresh} Precision AMR Mean': np.nanmean(amr_precision),
                 f'{thresh} Precision AMR Median': np.nanmedian(amr_precision),
             })
-            print("\n\n")
+            # print({
+            #     f'{thresh} Recall Coverage Mean': np.mean(coverage_recall_vals) * 100,
+            #     f'{thresh} Recall Coverage Median': np.median(coverage_recall_vals) * 100,
+            #     f'{thresh} Recall AMR Mean': np.nanmean(amr_recall),
+            #     f'{thresh} Recall AMR Median': np.nanmedian(amr_recall),
+            #     f'{thresh} Precision Coverage Mean': np.mean(coverage_precision_vals) * 100,
+            #     f'{thresh} Precision Coverage Median': np.median(coverage_precision_vals) * 100,
+            #     f'{thresh} Precision AMR Mean': np.nanmean(amr_precision),
+            #     f'{thresh} Precision AMR Median': np.nanmedian(amr_precision),
+            # })
+            # print("\n\n")
             # print('threshold', thresh)
             # coverage_recall_vals = [stat[i] for stat in coverage_recall] + [0] * num_failures
             # coverage_precision_vals = [stat[i] for stat in coverage_precision] + [0] * num_failures
@@ -451,17 +454,17 @@ class BenchmarkRunner():
             # print(f'Precision Coverage: Mean = {np.mean(coverage_precision_vals) * 100:.2f}, Median = {np.median(coverage_precision_vals) * 100:.2f}')
             # print(f'Precision AMR: Mean = {np.nanmean(amr_precision):.4f}, Median = {np.nanmedian(amr_precision):.4f}')
         # import ipdb; ipdb.set_trace()
-        # wandb.log({
-        #     'Conformer Sets Compared': len(self.results),
-        #     'Model Failures': self.num_failures,
-        #     'Addittional Failures': np.isnan(amr_recall).sum()
-        # })
-        print({
-            'Conformer Sets Compared': len(results),
+        wandb.log({
+            'Conformer Sets Compared': len(self.results),
             'Model Failures': self.num_failures,
             'Addittional Failures': np.isnan(amr_recall).sum()
         })
-        print("\n\n")
+        # print({
+        #     'Conformer Sets Compared': len(results),
+        #     'Model Failures': self.num_failures,
+        #     'Addittional Failures': np.isnan(amr_recall).sum()
+        # })
+        # print("\n\n")
         # print(len(results), 'conformer sets compared', num_failures, 'model failures', np.isnan(amr_recall).sum(),
             # 'additional failures')
         return True

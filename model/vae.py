@@ -109,7 +109,7 @@ class VAE(nn.Module):
         
         ar_mse = AR_loss
         # ar_mse, global_mse, ar_dist_loss = self.coordinate_loss(dec_results, generated_molecule, align =  True)
-        import ipdb; ipdb.set_trace()
+        # import ipdb; ipdb.set_trace()
         _, global_mse = self.coordinate_loss(dec_results, generated_molecule, align =  True)
         # print()
         # print("[Loss Func] Auto Regressive MSE", ar_mse)
@@ -183,26 +183,22 @@ class VAE(nn.Module):
         return 1e-12 + torch.exp(input / 2)
 
     def align(self, source, target):
-        # Rot, trans = rigid_transform_Kabsch_3D_torch(input.T, target.T)
-        # lig_coords = ((Rot @ (input).T).T + trans.squeeze())
-        # Kabsch RMSD implementation below taken from EquiBind
-        lig_coords_pred = target
-        lig_coords = source
-        if source.shape[0] == 1:
-            return source
-        lig_coords_pred_mean = lig_coords_pred.mean(dim=0, keepdim=True)  # (1,3)
-        lig_coords_mean = lig_coords.mean(dim=0, keepdim=True)  # (1,3)
+        with torch.no_grad():
+            lig_coords_pred = target
+            lig_coords = source
+            if source.shape[0] == 1:
+                return source
+            lig_coords_pred_mean = lig_coords_pred.mean(dim=0, keepdim=True)  # (1,3)
+            lig_coords_mean = lig_coords.mean(dim=0, keepdim=True)  # (1,3)
 
-        A = (lig_coords_pred - lig_coords_pred_mean).transpose(0, 1) @ (lig_coords - lig_coords_mean)+1e-7 #added noise to help with gradients
-        # if torch.isnan(A).any() or torch.isinf(A).any():
-        #     print("\n\n\n\n\n\n\n\n\n\nThe SVD tensor contains NaN or Inf values")
-        #     import ipdb; ipdb.set_trace()
-        U, S, Vt = torch.linalg.svd(A)
-        
-
-        corr_mat = torch.diag(torch.tensor([1, 1, torch.sign(torch.det(A))], device=lig_coords_pred.device))
-        rotation = (U @ corr_mat) @ Vt
-        translation = lig_coords_pred_mean - torch.t(rotation @ lig_coords_mean.t())  # (1,3)
+            A = (lig_coords_pred - lig_coords_pred_mean).transpose(0, 1) @ (lig_coords - lig_coords_mean) #added noise to help with gradients
+            # if torch.isnan(A).any() or torch.isinf(A).any():
+            #     print("\n\n\n\n\n\n\n\n\n\nThe SVD tensor contains NaN or Inf values")
+            #     import ipdb; ipdb.set_trace()
+            U, S, Vt = torch.linalg.svd(A)
+            corr_mat = torch.diag(1e-7 + torch.tensor([1, 1, torch.sign(torch.det(A))], device=lig_coords_pred.device))
+            rotation = (U @ corr_mat) @ Vt
+            translation = lig_coords_pred_mean - torch.t(rotation @ lig_coords_mean.t())  # (1,3)
         return (rotation @ lig_coords.t()).t() + translation
         # return lig_coords
     

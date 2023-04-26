@@ -226,12 +226,12 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
         h_feats_B = torch.cat([h_feats_B, rand_h_B], dim=1)
 
         # random noise: #! I do not think we should be adding noise
-        if self.noise_initial > 0:
-            noise_level = self.noise_initial * self.noise_decay_rate ** (epoch + 1)
-            h_feats_A = h_feats_A + noise_level * torch.randn_like(h_feats_A)
-            h_feats_B = h_feats_B + noise_level * torch.randn_like(h_feats_B)
-            coords_A = coords_A + noise_level * torch.randn_like(coords_A)
-            coords_B = coords_B + noise_level * torch.randn_like(coords_B)
+        # if self.noise_initial > 0:
+        #     noise_level = self.noise_initial * self.noise_decay_rate ** (epoch + 1)
+        #     h_feats_A = h_feats_A + noise_level * torch.randn_like(h_feats_A)
+        #     h_feats_B = h_feats_B + noise_level * torch.randn_like(h_feats_B)
+        #     coords_A = coords_A + noise_level * torch.randn_like(coords_A)
+        #     coords_B = coords_B + noise_level * torch.randn_like(coords_B)
 
         if self.use_mean_node_features:
             h_feats_A = torch.cat([h_feats_A, torch.log(A_graph.ndata['mu_r_norm'])],dim=1)

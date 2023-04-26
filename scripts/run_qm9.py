@@ -1,9 +1,8 @@
 import sys
-
 # Print the current Python path
-print(sys.path)
+# print(sys.path)
 import os
-print(os.environ['PYTHONPATH'])
+# print(os.environ['PYTHONPATH'])
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import ipdb
@@ -14,24 +13,34 @@ import logging
 from utils.torsional_diffusion_data_all import load_torsional_data  # , QM9_DIMS, DRUG_DIMS
 from model.vae import VAE
 import datetime
+from model.benchmarker import *
 
 
 def load_data(cfg):
-    # geom_path = "/home/dreidenbach/data/GEOM/rdkit_folder/"
-    # qm9_path = geom_path + "qm9/"
-    # drugs_path = geom_path + "drugs/"
     print("Loading QM9...")
-    # with open(geom_path + "qm9_safe_v2.pickle", 'rb') as f:
-    #     qm9 = pickle.load(f)
     train_loader, train_data = load_torsional_data(batch_size=cfg['train_batch_size'], mode='train', limit_mols=cfg['train_data_limit'])
     val_loader, val_data = load_torsional_data(batch_size=cfg['val_batch_size'], mode='val', limit_mols=cfg['val_data_limit'])
-    # val_loader, val_data = None, None
     print("Loading QM9 --> Done")
     return train_loader, train_data, val_loader, val_data
 
-@hydra.main(config_path="../configs", config_name="config.yaml")
+# def save_code():
+#     code_dir = "/home/dannyreidenbach/mcg/coagulation/model"
+#     # Create an artifact from the code directory
+#     code_artifact = wandb.Artifact("code", type="code")
+#     # Add all the files in the code directory to the artifact
+#     for root, dirs, files in os.walk(code_dir):
+#         for file in files:
+#             file_path = os.path.join(root, file)
+#             code_artifact.add_file(file_path)
+#     code_dir = "/home/dannyreidenbach/mcg/coagulation/utils"
+#     for root, dirs, files in os.walk(code_dir):
+#         for file in files:
+#             file_path = os.path.join(root, file)
+#             code_artifact.add_file(file_path)
+#     wandb_run.log_artifact(code_artifact)
+    
+@hydra.main(config_path="../configs", config_name="config_qm9.yaml")
 def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses', 'data', 'coordinates', 'wandb']
-    # ipdb.set_trace()
     import datetime
     now = datetime.datetime.now()
     suffix = f"_{now.strftime('%m-%d_%H-%M-%S')}"
@@ -41,9 +50,12 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
         project=cfg.wandb.project,
         name=NAME,
         notes=cfg.wandb.notes,
-        config = cfg
+        config = cfg,
+        save_code = "all"
     )
+    # save_code()
     train_loader, train_data, val_loader, val_data = load_data(cfg.data)
+    BENCHMARK = BenchmarkRunner()
     F = cfg.encoder["coord_F_dim"]
     D = cfg.encoder["latent_dim"]
     model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, coordinate_type, device = "cuda").cuda()
@@ -122,14 +134,8 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
             optim.step()
             optim.zero_grad()
 
-        # train_loss_log_total.append(train_loss_log)
-
-    # with open(f'./logs/{train_loss_log_name}.pkl', 'wb') as f:
-    #     pickle.dump(train_loss_log_total, f)
-
-        print("\n\n\n\n\n Validation")
+        print("Validation")
         with torch.no_grad():
-        #   model.flip_teacher_forcing()
             for A_batch, B_batch in val_loader:
                 A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
                 B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids = B_batch
@@ -145,14 +151,14 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
                 losses['Val Loss'] = loss.cpu()
                 wandb.log({'val_' + key: value for key, value in losses.items()})
                 print(f"Val LOSS = {loss}")
-    #   val_loss_log_total.append(val_loss_log)
-    #   model.flip_teacher_forcing()
-    #   with open(f'./logs/{val_loss_log_name}.pkl', 'wb') as f:
-    #     pickle.dump(val_loss_log_total, f)
+            
+            print("Test Benchmarks")
+            runner.generate(model)
+            # TODO: Save Model
+        
+
 
     print("Training Complete")
-    # with open(f'./logs/{train_loss_log_name}.pkl', 'wb') as f:
-    #     pickle.dump(train_loss_log_total, f)
 
 
 if __name__ == "__main__":
