@@ -30,7 +30,7 @@ class Decoder(nn.Module):
                  dropout, nonlin, leakyrelu_neg_slope, random_vec_dim, random_vec_std, use_scalar_features,
                  save_trajectories, weight_sharing, conditional_mask, **kwargs).cuda() #iegmn
         elif coordinate_type == "double":
-            self.double = True
+            self.double = False #True
             self.iegmn = IEGMN_Bidirectional_Double_Delta(n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
                  use_edge_features_in_gmn, use_mean_node_features, atom_emb_dim, latent_dim, coord_F_dim,
                  dropout, nonlin, leakyrelu_neg_slope, random_vec_dim, random_vec_std, use_scalar_features,

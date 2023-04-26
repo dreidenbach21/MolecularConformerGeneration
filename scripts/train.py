@@ -37,12 +37,12 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     suffix = f"_{now.strftime('%m-%d_%H-%M-%S')}"
     coordinate_type = cfg.coordinates
     NAME = cfg.wandb['name'] + suffix
-    # wandb.init(
-    #     project=cfg.wandb.project,
-    #     name=NAME,
-    #     notes=cfg.wandb.notes,
-    #     config = cfg
-    # )
+    wandb.init(
+        project=cfg.wandb.project,
+        name=NAME,
+        notes=cfg.wandb.notes,
+        config = cfg
+    )
     train_loader, train_data, val_loader, val_data = load_data(cfg.data)
     F = cfg.encoder["coord_F_dim"]
     D = cfg.encoder["latent_dim"]

@@ -281,14 +281,14 @@ def get_transformation_mask(mol, pyg_data = None):
     return mask_edges, mask_rotate
 
 class ConformerDataset(DGLDataset):
-    # def __init__(self, root, split_path, mode, types, dataset, num_workers=1, limit_molecules=None,
-    #              cache_path=None, pickle_dir=None, boltzmann_resampler=None, raw_dir='/home/dannyreidenbach/data/dgl', save_dir='/home/dannyreidenbach/data/dgl',
-    #              force_reload=False, verbose=False, transform=None, name = "qm9",
-    #              invariant_latent_dim = 64, equivariant_latent_dim = 32, use_diffusion_angle_def = False):
     def __init__(self, root, split_path, mode, types, dataset, num_workers=1, limit_molecules=None,
-                 cache_path=None, pickle_dir=None, boltzmann_resampler=None, raw_dir='/home/dreidenbach/data/dgl', save_dir='/home/dreidenbach/data/dgl',
+                 cache_path=None, pickle_dir=None, boltzmann_resampler=None, raw_dir='/home/dannyreidenbach/data/dgl', save_dir='/home/dannyreidenbach/data/dgl',
                  force_reload=False, verbose=False, transform=None, name = "qm9",
                  invariant_latent_dim = 64, equivariant_latent_dim = 32, use_diffusion_angle_def = False):
+    # def __init__(self, root, split_path, mode, types, dataset, num_workers=1, limit_molecules=None,
+    #              cache_path=None, pickle_dir=None, boltzmann_resampler=None, raw_dir='/home/dreidenbach/data/dgl', save_dir='/home/dreidenbach/data/dgl',
+    #              force_reload=False, verbose=False, transform=None, name = "qm9",
+    #              invariant_latent_dim = 64, equivariant_latent_dim = 32, use_diffusion_angle_def = False):
         # part of the featurisation and filtering code taken from GeoMol https://github.com/PattanaikL/GeoMol
 #         super(ConformerDataset, self).__init__(name, transform) /home/dreidenbach/data
         self.D = invariant_latent_dim
@@ -354,20 +354,7 @@ class ConformerDataset(DGLDataset):
             #     pool.close()
             #     # wait for all tasks to complete and processes to close
             #     pool.join()
-            # datapoints = [item for sublist in results for item in sublist if sublist[0] is not None]
-            
-            
-            # with mp.Pool(num_workers) as pool:
-            #     results = pool.map_async(self.filter_smiles_mp, smiles, timeout = 120)
-            #     # wait for all tasks to complete and processes to close
-            #     results.wait()
-            #     # pool.close()
-            #     # pool.join()
-                
-            # datapoints = [item for sublist in results.get() for item in sublist if sublist[0] is not None]
-            
-
-            
+            # datapoints = [item for sublist in results for item in sublist if sublist[0] is not None]   
         else:
             if num_workers > 1:
                 p = Pool(num_workers)
@@ -381,7 +368,6 @@ class ConformerDataset(DGLDataset):
                     pbar.update()
             if num_workers > 1: p.__exit__(None, None, None)
         print('Fetched', len(datapoints), 'mols successfully')
-        print('Example', datapoints[0])
         print(self.failures)
         if pickle_dir: del self.current_pickle
         return datapoints
@@ -777,14 +763,14 @@ def collate(samples):
     B_frag_ids = [x[5] for x in B]
     return (A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids), (B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids)
 
-# def load_torsional_data(batch_size = 32, mode = 'train', data_dir='/home/dannyreidenbach/data/QM9/qm9/',
-#                 dataset='qm9', limit_mols=0, log_dir='./test_run', num_workers=1, restart_dir=None, seed=0,
-#                  split_path='/home/dannyreidenbach/data/QM9/split.npy',
-#                  std_pickles=None):
-def load_torsional_data(batch_size = 32, mode = 'train', data_dir='/home/dreidenbach/data/torsional_diffusion/QM9/qm9/',
+def load_torsional_data(batch_size = 32, mode = 'train', data_dir='/home/dannyreidenbach/data/QM9/qm9/',
                 dataset='qm9', limit_mols=0, log_dir='./test_run', num_workers=1, restart_dir=None, seed=0,
-                 split_path='/home/dreidenbach/data/torsional_diffusion/QM9/split.npy',
-                 std_pickles=None): #   std_pickles='/home/dannyreidenbach/data/QM9/standardized_pickles'):
+                 split_path='/home/dannyreidenbach/data/QM9/split.npy',
+                 std_pickles=None):
+# def load_torsional_data(batch_size = 32, mode = 'train', data_dir='/home/dreidenbach/data/torsional_diffusion/QM9/qm9/',
+#                 dataset='qm9', limit_mols=0, log_dir='./test_run', num_workers=1, restart_dir=None, seed=0,
+#                  split_path='/home/dreidenbach/data/torsional_diffusion/QM9/split.npy',
+#                  std_pickles=None): #   std_pickles='/home/dannyreidenbach/data/QM9/standardized_pickles'):
     types = qm9_types if dataset == 'qm9' else drugs_types
     use_diffusion_angle_def = False
     data = ConformerDataset(data_dir, split_path, mode, dataset=dataset,
@@ -792,7 +778,7 @@ def load_torsional_data(batch_size = 32, mode = 'train', data_dir='/home/dreiden
                                    num_workers=num_workers,
                                    limit_molecules=limit_mols, #args.limit_train_mols,
                                    cache_path=None, #args.cache,
-                                   name=f'{dataset}_{mode}_{limit_mols}',
+                                   name=f'{dataset}_{mode}_{limit_mols}_bad',
                                    pickle_dir=std_pickles,
                                    use_diffusion_angle_def=use_diffusion_angle_def,
                                    boltzmann_resampler=None)
