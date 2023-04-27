@@ -14,6 +14,7 @@ from utils.torsional_diffusion_data_all import load_torsional_data  # , QM9_DIMS
 from model.vae import VAE
 import datetime
 from model.benchmarker import *
+import glob
 
 
 def load_data(cfg):
@@ -23,7 +24,7 @@ def load_data(cfg):
     print("Loading QM9 --> Done")
     return train_loader, train_data, val_loader, val_data
 
-# def save_code():
+# def save_code(wandb_run):
 #     code_dir = "/home/dannyreidenbach/mcg/coagulation/model"
 #     # Create an artifact from the code directory
 #     code_artifact = wandb.Artifact("code", type="code")
@@ -38,7 +39,20 @@ def load_data(cfg):
 #             file_path = os.path.join(root, file)
 #             code_artifact.add_file(file_path)
 #     wandb_run.log_artifact(code_artifact)
-    
+def save_code(wandb_run): 
+    code_dir = "/home/dannyreidenbach/mcg/coagulation/model" 
+    # Create an artifact from the code directory
+    code_artifact = wandb.Artifact("code", type="code") 
+    # Add all the .py files in the code directory to the artifact using glob
+    for file_path in glob.glob(code_dir + '/*.py'):
+        code_artifact.add_file(file_path) 
+    code_dir = "/home/dannyreidenbach/mcg/coagulation/utils" 
+    # Add all the .py files in the utils directory to the artifact using glob
+    for file_path in glob.glob(code_dir + '/*.py'):
+        code_artifact.add_file(file_path) 
+    wandb_run.log_artifact(code_artifact)
+
+
 @hydra.main(config_path="../configs", config_name="config_qm9.yaml")
 def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses', 'data', 'coordinates', 'wandb']
     import datetime
@@ -46,16 +60,16 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     suffix = f"_{now.strftime('%m-%d_%H-%M-%S')}"
     coordinate_type = cfg.coordinates
     NAME = cfg.wandb['name'] + suffix
-    wandb.init(
+    wandb_run = wandb.init(
         project=cfg.wandb.project,
         name=NAME,
         notes=cfg.wandb.notes,
         config = cfg,
-        save_code = "all"
+        save_code = True
     )
-    # save_code()
+    save_code(wandb_run)
     train_loader, train_data, val_loader, val_data = load_data(cfg.data)
-    BENCHMARK = BenchmarkRunner()
+    BENCHMARK = BenchmarkRunner(batch_size = cfg.data['train_batch_size'])
     F = cfg.encoder["coord_F_dim"]
     D = cfg.encoder["latent_dim"]
     model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, coordinate_type, device = "cuda").cuda()
@@ -77,7 +91,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     #         self.step_schedulers() --> self.lr_scheduler.step()
     # self.optim.zero_grad()
     # self.optim_steps += 1
-    torch.autograd.set_detect_anomaly(True)
+    # torch.autograd.set_detect_anomaly(True)
     train_loss_log_name = NAME + "_train"
     val_loss_log_name =  NAME + "_val"
     train_loss_log_total, val_loss_log_total = [], []
@@ -153,7 +167,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
                 print(f"Val LOSS = {loss}")
             
             print("Test Benchmarks")
-            runner.generate(model)
+            BENCHMARK.generate(model)
             # TODO: Save Model
         
 

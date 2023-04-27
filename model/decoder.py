@@ -284,7 +284,10 @@ class Decoder(nn.Module):
             lig_coords_mean = lig_coords.mean(dim=0, keepdim=True)  # (1,3)
 
             A = (lig_coords_pred - lig_coords_pred_mean).transpose(0, 1) @ (lig_coords - lig_coords_mean)+1e-7 #added noise to help with gradients
-
+            if torch.isnan(A).any() or torch.isinf(A).any():
+                print(torch.max(A))
+                import ipdb; ipdb.set_trace()
+                
             U, S, Vt = torch.linalg.svd(A)
 
             corr_mat = torch.diag(torch.tensor([1, 1, torch.sign(torch.det(A))], device=lig_coords_pred.device))
@@ -294,9 +297,11 @@ class Decoder(nn.Module):
         # return lig_coords
     
     def mse(self, generated, true, align = False):
-        if align:
-            true = self.align(true, generated)
-        loss = self.mse_none(true, generated)
+        # if align:
+        #     true = self.align(true, generated)
+        # loss = self.mse_none(true, generated)
+        # ! No longer calculating an AR MSE Loss
+        loss = torch.zeros_like(generated)
         return loss
     
     def get_reference(self, subgraph, molecule, ref_ids):

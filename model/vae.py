@@ -191,16 +191,17 @@ class VAE(nn.Module):
             lig_coords_pred_mean = lig_coords_pred.mean(dim=0, keepdim=True)  # (1,3)
             lig_coords_mean = lig_coords.mean(dim=0, keepdim=True)  # (1,3)
 
-            A = (lig_coords_pred - lig_coords_pred_mean).transpose(0, 1) @ (lig_coords - lig_coords_mean) #added noise to help with gradients
-            # if torch.isnan(A).any() or torch.isinf(A).any():
-            #     print("\n\n\n\n\n\n\n\n\n\nThe SVD tensor contains NaN or Inf values")
-            #     import ipdb; ipdb.set_trace()
+            A = (lig_coords_pred - lig_coords_pred_mean).transpose(0, 1) @ (lig_coords - lig_coords_mean) 
+            A = A + torch.eye(A.shape[0]).to(A.device) * 1e-5 #added noise to help with gradients
+            if torch.isnan(A).any() or torch.isinf(A).any():
+                print("\n\n\n\n\n\n\n\n\n\nThe SVD tensor contains NaN or Inf values")
+                import ipdb; ipdb.set_trace()
             U, S, Vt = torch.linalg.svd(A)
-            corr_mat = torch.diag(1e-7 + torch.tensor([1, 1, torch.sign(torch.det(A))], device=lig_coords_pred.device))
+            # corr_mat = torch.diag(1e-7 + torch.tensor([1, 1, torch.sign(torch.det(A))], device=lig_coords_pred.device))
+            corr_mat = torch.diag(torch.tensor([1, 1, torch.sign(torch.det(A))], device=lig_coords_pred.device))
             rotation = (U @ corr_mat) @ Vt
             translation = lig_coords_pred_mean - torch.t(rotation @ lig_coords_mean.t())  # (1,3)
         return (rotation @ lig_coords.t()).t() + translation
-        # return lig_coords
     
     def rmsd(self, generated, true, align = False, no_reduction = False):
         if align:
