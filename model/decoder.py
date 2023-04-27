@@ -229,9 +229,9 @@ class Decoder(nn.Module):
             start += num_nodes[idx]
             cids = [prev + i for i in range(len(ids))]
             prev += len(ids)
-
-            final_molecule.ndata['x_cc'][updated_ids, :] = coords_A[cids, :]
-            final_molecule.ndata['feat_cc'][updated_ids, :] = h_feats_A[cids, :]
+            
+            final_molecule.ndata['x_cc'][updated_ids, :] = coords_A[cids, :].to('cpu')
+            final_molecule.ndata['feat_cc'][updated_ids, :] = h_feats_A[cids, :].to('cpu')
 
     def add_reference(self, ids, refs, progress):
         batch_idx = 0
@@ -357,7 +357,7 @@ class Decoder(nn.Module):
         return loss
     
     def forward(self, cg_mol_graph, rdkit_mol_graph, cg_frag_ids, true_geo_batch):
-        rdkit_reference = copy.deepcopy(rdkit_mol_graph)
+        rdkit_reference = copy.deepcopy(rdkit_mol_graph.to('cpu'))
         X_cc, H_cc = self.channel_selection(cg_mol_graph, rdkit_mol_graph, cg_frag_ids)
         rdkit_mol_graph.ndata['x_cc'] = X_cc
         rdkit_mol_graph.ndata['feat_cc'] = H_cc
@@ -408,12 +408,19 @@ class Decoder(nn.Module):
         losses = [[] for _ in range(len(progress))]#torch.zeros_like(progress)
         loss_idx = list(range(len(progress)))
         # for t in range(max_nodes):
+        final_molecule = final_molecule.to('cpu')
+        true_geo_batch = true_geo_batch.to('cpu')
         for t in tqdm(range(max_nodes), desc='autoregressive time steps'):
             # ipdb.set_trace()
             if self.verbose: print("[Auto Regressive Step]")
             id_batch = frag_batch[t]
             # if self.verbose: print("ID", id_batch)
+            # try:
             latent, geo_latent = self.isolate_next_subgraph(final_molecule, id_batch, true_geo_batch)
+            # except Exception as e:
+            #     print(e)
+            #     print(id_batch)
+            #     assert(1==0)
             if self.double:
                 r_batch = ref_batch[t]
                 latent = self.get_reference(latent, final_molecule, r_batch)
@@ -454,10 +461,13 @@ class Decoder(nn.Module):
                     ids = [x for x in ids if x not in set(current_molecule_ids[idx])] #! added to prevent overlap of reference
                     current_molecule_ids[idx].extend(ids)
             # ipdb.set_trace() # erroring on dgl.unbatch(final_molecule) for some odd reason --> fixed by adding an else above
+            del current_molecule, geo_current
             current_molecule, geo_current = self.gather_current_molecule(final_molecule, current_molecule_ids, progress, true_geo_batch)
+            del latent, geo_latent
         # ipdb.set_trace()
+        del current_molecule, geo_current
         for idx, natoms in enumerate(total_num_atoms):
             losses[idx] = (sum(losses[idx])/natoms).unsqueeze(0)
             if self.verbose: print("[Final AR Loss]", natoms, losses[idx])
-        return final_molecule, rdkit_reference, returns, (X_cc, H_cc), torch.cat(losses).mean()
+        return final_molecule.to(self.device), rdkit_reference, returns, (X_cc, H_cc), torch.cat(losses).mean()
 

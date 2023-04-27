@@ -99,13 +99,13 @@ class VAE(nn.Module):
         # print("[Loss Func] Channel Selection Norms (x,h): ", torch.norm(x_cc, 2), torch.norm(h_cc, 2), torch.norm(x_true, 2))
         # x_cc_loss = (torch.norm(x_cc, 2) - torch.norm(x_true, 2))**2
         # print("[Loss Func] X CC norm diff loss", x_cc_loss)
-        x_cc_loss = []
-        start = 0
-        for natoms in generated_molecule.batch_num_nodes():
-            x_cc_loss.append(self.rmsd(x_cc[start: start + natoms], x_true[start: start + natoms], align = True).unsqueeze(0))
-            start += natoms
-        # print("[Loss Func] aligned X CC loss", x_cc_loss)
-        x_cc_loss = torch.cat(x_cc_loss).mean() #sum(x_cc_loss) switch to mean over batch size
+        x_cc_loss = torch.tensor([0]) #[]
+        # start = 0
+        # for natoms in generated_molecule.batch_num_nodes():
+        #     x_cc_loss.append(self.rmsd(x_cc[start: start + natoms], x_true[start: start + natoms], align = True).unsqueeze(0))
+        #     start += natoms
+        # # print("[Loss Func] aligned X CC loss", x_cc_loss)
+        # x_cc_loss = torch.cat(x_cc_loss).mean() #sum(x_cc_loss) switch to mean over batch size
         
         ar_mse = AR_loss
         # ar_mse, global_mse, ar_dist_loss = self.coordinate_loss(dec_results, generated_molecule, align =  True)

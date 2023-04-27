@@ -42,16 +42,26 @@ def load_data(cfg):
 def save_code(wandb_run): 
     code_dir = "/home/dannyreidenbach/mcg/coagulation/model" 
     # Create an artifact from the code directory
-    code_artifact = wandb.Artifact("code", type="code") 
+    code_artifact = wandb.Artifact("model", type="code") 
     # Add all the .py files in the code directory to the artifact using glob
     for file_path in glob.glob(code_dir + '/*.py'):
-        code_artifact.add_file(file_path) 
+        code_artifact.add_file(file_path)
+    wandb_run.log_artifact(code_artifact)
+    
+    code_artifact = wandb.Artifact("utils", type="code") 
     code_dir = "/home/dannyreidenbach/mcg/coagulation/utils" 
     # Add all the .py files in the utils directory to the artifact using glob
     for file_path in glob.glob(code_dir + '/*.py'):
         code_artifact.add_file(file_path) 
     wandb_run.log_artifact(code_artifact)
 
+import subprocess
+
+def print_gpu_usage():
+    command = "nvidia-smi"
+    result = subprocess.run(command, shell=True, stdout=subprocess.PIPE)
+    print(result.stdout.decode('utf-8'))
+    
 
 @hydra.main(config_path="../configs", config_name="config_qm9.yaml")
 def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses', 'data', 'coordinates', 'wandb']
@@ -109,7 +119,10 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
         if kl_annealing:
             model.kl_v_beta = kl_weight
         train_loss_log, val_loss_log = [], []
+        count = 0
         for A_batch, B_batch in train_loader:
+            # print("Memory", torch.cuda.memory_allocated())
+            print_gpu_usage()
             A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
             B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids = B_batch
 
@@ -147,6 +160,11 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=cfg.optimizer.clip_grad_norm, norm_type=2) 
             optim.step()
             optim.zero_grad()
+            del A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids
+            del B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids
+            if count > 0 and count %10 == 0:
+                torch.cuda.empty_cache()
+            count+=1
 
         print("Validation")
         with torch.no_grad():
