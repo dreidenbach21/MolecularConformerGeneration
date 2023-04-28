@@ -597,6 +597,13 @@ class ConformerDataset(DGLDataset):
 
             pos.append(torch.tensor(mol.GetConformer().GetPositions(), dtype=torch.float))
             # weights.append(conf['boltzmannweight'])
+            # # ! Is this the issue I am seeing in the qm9 data?
+            # # TODO: is this it doggo?
+            # if pos[-1].shape[0] != Chem.AddHs(mol).GetNumAtoms():
+            #     import ipdb; idpb.set_trace
+            #     datas.append(None)
+            #     continue
+            
             correct_mol = mol
             mol_features = featurize_mol(correct_mol, self.types, use_rdkit_coords = use_rdkit_coords, old_rdkit=old_rdkit)
             datas.append(mol_features)
@@ -684,6 +691,28 @@ def load_torsional_data(batch_size = 32, mode = 'train', data_dir='/home/dannyre
     #                                boltzmann_resampler=None,
     #                                old_rdkit = True)
     # import ipdb; ipdb.set_trace()
+    dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=num_workers,
+                                            collate_fn = collate)
+    return dataloader, data
+
+def load_torsional_data_local(batch_size = 32, mode = 'train', data_dir='/home/dreidenbach/data/torsional_diffusion/QM9/qm9/',
+                dataset='qm9', limit_mols=0, log_dir='./test_run', num_workers=1, restart_dir=None, seed=0,
+                 split_path='/home/dreidenbach/data/torsional_diffusion/QM9/split.npy',
+                 std_pickles=None): #   std_pickles='/home/dannyreidenbach/data/QM9/standardized_pickles'):
+    types = qm9_types if dataset == 'qm9' else drugs_types
+    use_diffusion_angle_def = False
+    data = ConformerDataset(data_dir, split_path, mode, dataset=dataset,
+                                   types=types, transform=None,
+                                   num_workers=num_workers,
+                                   limit_molecules=limit_mols, #args.limit_train_mols,
+                                   cache_path=None, #args.cache,
+                                   name=f'{dataset}_{mode}_{limit_mols}_final',
+                                   pickle_dir=std_pickles,
+                                   use_diffusion_angle_def=use_diffusion_angle_def,
+                                   raw_dir='/home/dreidenbach/data/torsional_diffusion/QM9/dgl', 
+                                   save_dir='/home/dreidenbach/data/torsional_diffusion/QM9/dgl',
+                                   boltzmann_resampler=None)
+    
     dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=num_workers,
                                             collate_fn = collate)
     return dataloader, data

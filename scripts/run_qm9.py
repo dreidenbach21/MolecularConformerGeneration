@@ -61,6 +61,12 @@ def print_gpu_usage():
     command = "nvidia-smi"
     result = subprocess.run(command, shell=True, stdout=subprocess.PIPE)
     print(result.stdout.decode('utf-8'))
+
+def get_memory_usage():
+    # cmd = "nvidia-smi | grep python | awk '{ print $6 }'"
+    cmd = "nvidia-smi | grep python | awk '{ print $8 }' | sed 's/MiB//'"
+    output = subprocess.check_output(cmd, shell=True)
+    return int(output.strip().decode()) #int(output.strip())
     
 
 @hydra.main(config_path="../configs", config_name="config_qm9.yaml")
@@ -102,9 +108,6 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     # self.optim.zero_grad()
     # self.optim_steps += 1
     # torch.autograd.set_detect_anomaly(True)
-    train_loss_log_name = NAME + "_train"
-    val_loss_log_name =  NAME + "_val"
-    train_loss_log_total, val_loss_log_total = [], []
     
     kl_annealing = False
     kl_weight = 1e-6
@@ -122,10 +125,12 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
         count = 0
         for A_batch, B_batch in train_loader:
             # print("Memory", torch.cuda.memory_allocated())
-            print_gpu_usage()
+            # print_gpu_usage()
             A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
             B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids = B_batch
-
+            # for segment in frag_ids:
+            #     if -1 in segment:
+            #         ipdb.set_trace()
             A_graph, geo_A, Ap, A_cg, geo_A_cg = A_graph.to('cuda:0'), geo_A.to(
                 'cuda:0'), Ap.to('cuda:0'), A_cg.to('cuda:0'), geo_A_cg.to('cuda:0')
             B_graph, geo_B, Bp, B_cg, geo_B_cg = B_graph.to('cuda:0'), geo_B.to(
@@ -139,15 +144,16 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
             # ipdb.set_trace()
             print(f"Train LOSS = {loss}")
             loss.backward()
+            # memory_usage = get_memory_usage()
+            # wandb.log({"memory_usage": memory_usage})
             losses['Train Loss'] = loss.cpu()
             wandb.log(losses)
 
-            for name, p in model.named_parameters():
-                if p.requires_grad and p.grad is not None and (torch.isnan(p.grad).any() or torch.isnan(p.data).any()):
-                    print("[LOG]", name, torch.min(p.grad).item(), torch.max(p.grad).item(), torch.min(p.data).item(), torch.max(p.data).item())
+            # for name, p in model.named_parameters():
+            #     if p.requires_grad and p.grad is not None and (torch.isnan(p.grad).any() or torch.isnan(p.data).any()):
+            #         print("[LOG]", name, torch.min(p.grad).item(), torch.max(p.grad).item(), torch.min(p.data).item(), torch.max(p.data).item())
 
-            parameters = [p for p in model.parameters(
-            ) if p.grad is not None and p.requires_grad]
+            parameters = [p for p in model.parameters() if p.grad is not None and p.requires_grad]
             norm_type = 2
             total_norm = 0.0
             for p in parameters:
@@ -156,12 +162,13 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
             total_norm = total_norm ** 0.5
             print(f"Train LOSS = {loss}")
             print("TOTAL GRADIENT NORM", total_norm)
-
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=cfg.optimizer.clip_grad_norm, norm_type=2) 
             optim.step()
             optim.zero_grad()
+            
             del A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids
             del B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids
+            del generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss, losses
             if count > 0 and count %10 == 0:
                 torch.cuda.empty_cache()
             count+=1

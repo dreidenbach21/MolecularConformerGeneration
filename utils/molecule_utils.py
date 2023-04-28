@@ -260,6 +260,7 @@ def coarsen_molecule(m, use_diffusion_angle_def = False):
     if not use_diffusion_angle_def:
         torsions = get_torsions_geo([m])
     else:
+        assert(1 == 0)
         torsions = get_torsion_angles(m)
     #print("Torsion Angles", torsions)
     if len(torsions) > 0:
@@ -295,6 +296,10 @@ def coarsen_molecule(m, use_diffusion_angle_def = False):
         for b,c in bond_break:
             bond_break_map[b].append(c)
             bond_break_map[c].append(b)
+        # # : trace
+        # for _test in frag_ids:
+        #     if -1 in _test:
+        #         import ipdb; ipdb.set_trace()
         return list(frags), frag_ids, adj, out, bond_break_map, cg_bonds, cg_map
     else:
         return [m], [list(range(m.GetNumAtoms()))], Chem.rdmolops.GetAdjacencyMatrix(m), m, [], None, None

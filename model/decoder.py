@@ -235,25 +235,32 @@ class Decoder(nn.Module):
 
     def add_reference(self, ids, refs, progress):
         batch_idx = 0
+        ids = copy.deepcopy(ids)
         for atom_ids, ref_list in zip(ids, refs):
             for idx, bead in enumerate(atom_ids):
-                # if self.verbose: print(idx, bead)
-                if len(bead) == 1:
+                if self.verbose: print(idx, bead)
+                partner = int(ref_list[idx].item())
+                if len(bead) == 1 and partner != -1:
                     if self.verbose: print("\n start", atom_ids)
-                    bead.add(int(ref_list[idx].item()))
+                    bead.add(partner)
                     if self.verbose: print("update with reference", atom_ids)
                     progress[batch_idx] += 1
             batch_idx += 1
         lens = [sum([len(y) for y in x]) for x in ids]
         check = all([a-b.item() == 0 for a, b in zip(lens,progress)])
         # ipdb.set_trace()
+        # try:
         assert(check)
+        # except:
+        #     ipdb.set_trace()
         return ids, progress
 
     def distance_loss(self, generated_coords_all, geometry_graphs, true_coords = None):
         geom_loss = []
         for geometry_graph, generated_coords in zip(dgl.unbatch(geometry_graphs), generated_coords_all):
             src, dst = geometry_graph.edges()
+            if len(src) == 0 or len(dst) == 0:
+                geom_loss.append(torch.tensor([0]).to(self.device))
             src = src.long()
             dst = dst.long()
             d_squared = torch.sum((generated_coords[src] - generated_coords[dst]) ** 2, dim=1)
@@ -435,7 +442,8 @@ class Decoder(nn.Module):
             model_predicted_B_split = [x.ndata['x_cc'] for x in dgl.unbatch(current_molecule)] if current_molecule is not None else None
             gen_input = latent.ndata['x_cc']
             # if self.verbose: print("[AR step end] geom losses total from decoder", t, geom_losses)
-            dist_loss = self.distance_loss([x.ndata['x_cc'] for x in dgl.unbatch(latent)], geo_latent, [x.ndata['x_true'] for x in dgl.unbatch(latent)])
+            # dist_loss = self.distance_loss([x.ndata['x_cc'] for x in dgl.unbatch(latent)], geo_latent, [x.ndata['x_true'] for x in dgl.unbatch(latent)])
+            dist_loss = torch.tensor([0])
             if self.verbose: print()
             returns.append((coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, full_trajectory, id_batch, ref_coords_A, ref_coords_B, ref_coords_B_split, gen_input, model_predicted_B, model_predicted_B_split, dist_loss))
             # if self.verbose: print("ID Check", returns[0][6])

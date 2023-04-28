@@ -91,7 +91,7 @@ class BenchmarkRunner():
         self.threshold = np.arange(0, 2.5, .125)
         self.test_data = pd.read_csv(valid_mols)
         self.dataset = dataset
-        self.n_workers = n_workers
+        self.n_workers = 1
         self.D, self.F = D, F
         self.name = f'{dataset}_full'
         self.batch_size = batch_size
@@ -107,7 +107,8 @@ class BenchmarkRunner():
             self.save() 
             self.smiles = [x[0] for x in self.datapoints]
             data = [x[1] for x in self.datapoints]
-        self.dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size= self.batch_size, shuffle=False, drop_last=False, num_workers=1 ,collate_fn = collate)
+        # torch.multiprocessing.set_sharing_strategy('file_system')
+        self.dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size= self.batch_size, shuffle=False, drop_last=False, num_workers=0 ,collate_fn = collate)
     
     def clean_true_mols(self):
         for smi_idx, row in tqdm(self.test_data.iterrows(), total=len(self.test_data)):
@@ -376,23 +377,27 @@ class BenchmarkRunner():
                 'n_model': n_model,
                 'rmsd': np.nan * np.ones((n_true, n_model))
             }
-            self.results = results
+            # self.results = results
             for i_true in range(n_true):
                 jobs.append((smi, corrected_smi, i_true))
-
+                
+        self.results = results
         random.shuffle(jobs)
-        if self.n_workers > 1:
-            p = Pool(self.n_workers)
-            map_fn = p.imap_unordered
-            p.__enter__()
-        else:
-            map_fn = map
-        self.final_confs_temp = final_confs
-        for res in tqdm(map_fn(self.worker_fn, jobs), total=len(jobs)):
-            self.populate_results(res)
+        # if self.n_workers > 1:
+        #     p = Pool(self.n_workers)
+        #     map_fn = p.imap_unordered
+        #     p.__enter__()
+        # else:
+        #     map_fn = map
+        # self.final_confs_temp = final_confs
+        # for res in tqdm(map_fn(self.worker_fn, jobs), total=len(jobs)):
+        #     self.populate_results(res)
 
-        if self.n_workers > 1:
-            p.__exit__(None, None, None)
+        # if self.n_workers > 1:
+        #     p.__exit__(None, None, None)
+        self.final_confs_temp = final_confs
+        for job in tqdm(jobs, total=len(jobs)):
+            self.populate_results(self.worker_fn(job))
         self.run(results)
         # import ipdb; ipdb.set_trace()
         return results

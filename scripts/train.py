@@ -11,9 +11,10 @@ import torch
 import wandb
 import random
 import logging
-from utils.torsional_diffusion_data_all import load_torsional_data  # , QM9_DIMS, DRUG_DIMS
+from utils.torsional_diffusion_data_all import load_torsional_data_local  # , QM9_DIMS, DRUG_DIMS
 from model.vae import VAE
 import datetime
+from model.benchmarker import *
 
 
 def load_data(cfg):
@@ -23,8 +24,8 @@ def load_data(cfg):
     print("Loading QM9...")
     # with open(geom_path + "qm9_safe_v2.pickle", 'rb') as f:
     #     qm9 = pickle.load(f)
-    train_loader, train_data = load_torsional_data(batch_size=cfg['train_batch_size'], mode='train', limit_mols=cfg['train_data_limit'])
-    val_loader, val_data = load_torsional_data(batch_size=cfg['val_batch_size'], mode='val', limit_mols=cfg['val_data_limit'])
+    train_loader, train_data = load_torsional_data_local(batch_size=cfg['train_batch_size'], mode='train', limit_mols=cfg['train_data_limit'])
+    val_loader, val_data = load_torsional_data_local(batch_size=cfg['val_batch_size'], mode='val', limit_mols=cfg['val_data_limit'])
     # val_loader, val_data = None, None
     print("Loading QM9 --> Done")
     return train_loader, train_data, val_loader, val_data
@@ -46,6 +47,10 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     train_loader, train_data, val_loader, val_data = load_data(cfg.data)
     F = cfg.encoder["coord_F_dim"]
     D = cfg.encoder["latent_dim"]
+    BENCHMARK = BenchmarkRunner(true_mols = '/home/dreidenbach/data/torsional_diffusion/QM9/test_mols.pkl',
+                                valid_mols = '/home/dreidenbach/data/torsional_diffusion/QM9/test_smiles.csv',
+                                save_dir = '/home/dreidenbach/data/torsional_diffusion/QM9/test_set',
+                                batch_size = cfg.data['train_batch_size'])
     model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, coordinate_type, device = "cuda").cuda()
     
     print("CUDA CHECK", next(model.parameters()).is_cuda)
@@ -145,6 +150,10 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
                 losses['Val Loss'] = loss.cpu()
                 wandb.log({'val_' + key: value for key, value in losses.items()})
                 print(f"Val LOSS = {loss}")
+                
+            print("Test Benchmarks")
+            if epoch >= 0 and epoch % 1 == 0:
+                BENCHMARK.generate(model)
     #   val_loss_log_total.append(val_loss_log)
     #   model.flip_teacher_forcing()
     #   with open(f'./logs/{val_loss_log_name}.pkl', 'wb') as f:

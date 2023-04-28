@@ -7,7 +7,7 @@ defaults:
   - losses: base
   - data: base
 
-coordinates: double #absolute # or delta or double
+coordinates: delta #absolute # or delta or double
 
 hydra:
   job:
@@ -33,5 +33,5 @@ hydra:
 
 wandb:
   project: MCG
-  name: local_double_test
-  notes: testing data + svd gradient issues
+  name: local_benchmark_test
+  notes: testing data + local benchmarking
