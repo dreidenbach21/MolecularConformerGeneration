@@ -223,27 +223,58 @@ class BenchmarkRunner():
                 geometry_graph_B = get_geometry_graph(mol)
                 Bp = create_pooling_graph(data_B, B_frag_ids)
                 geometry_graph_B_cg = get_coarse_geometry_graph(B_cg, B_cg_map)
-                # err = check_distances(data_B, geometry_graph_B, True)
+                err = check_distances(data_B, geometry_graph_B, True)
+                assert( err < 1e-3 )
                 # if err.item() > 1e-3:
                 #     import ipdb; ipdb.set_trace()
                 #     data_B = self.featurize_mol(mol_dic, use_rdkit_coords = True)
                 results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids))
+            
+            bad_idx_B2 = []
+            results_B2 = []
+            for idx, data_B in enumerate(data_Bs):
+                if idx in set(bad_idx_A) or idx in set(bad_idx_B):
+                    bad_idx_B2.append(idx)
+                    results_B2.append(None)
+                    continue
+                if not data_B:
+                    print("Bad B2 Not found in first pass: TAKE A LOOK")
+                    bad_idx_B2.append(idx)
+                    results_B2.append(None)
+                    continue
+                mol = true_confs[idx]
+                B_frags, B_frag_ids, B_adj, B_out, B_bond_break, B_cg_bonds, B_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
+                B_cg = conditional_coarsen_3d(data_B, B_frag_ids, B_cg_map, B_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
+                geometry_graph_B = get_geometry_graph(mol)
+                Bp = create_pooling_graph(data_B, B_frag_ids)
+                geometry_graph_B_cg = get_coarse_geometry_graph(B_cg, B_cg_map)
+                results_B2.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids))
+                
             try:
                 assert(len(results_A) == len(results_B))
             except:
                 import ipdb; ipdb.set_trace()
+            
+            try:
+                assert(set(bad_idx_B) == set(bad_idx_B2))
+            except:
+                import ipdb; ipdb.set_trace()
+                
             bad_idx = set(bad_idx_A) | set(bad_idx_B)
             # import ipdb; ipdb.set_trace()
             results_A = [x for idx, x in enumerate(results_A) if idx not in bad_idx]
             results_B = [x for idx, x in enumerate(results_B) if idx not in bad_idx]
+            results_B2 = [x for idx, x in enumerate(results_B2) if idx not in bad_idx]
             assert(len(results_A) == len(results_B))
             if len(results_A) == 0 or len(results_B) == 0:
                 self.model_preds[smi] = [None]
-                # self.problem_smiles.add(smi)
-            # self.model_preds[smi] = [(a,b) for a,b in zip(results_A, results_B)]
+
+            count = 0
             for a,b in zip(results_A, results_B):
                 self.model_preds[smi].append((a,b))
-                self.model_preds[smi].append((copy.deepcopy(a),copy.deepcopy(b)))
+                self.model_preds[smi].append((copy.deepcopy(a), results_B2[count]))
+                count += 1
+                
         self.datapoints = []
         for k, v in self.model_preds.items():
             if v[0] == None:
@@ -328,7 +359,7 @@ class BenchmarkRunner():
         else:
             molecules = []
             for A_batch, B_batch in self.dataloader:
-                A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
+                # A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
                 B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids = B_batch
                 molecules.extend(dgl.unbatch(B_graph))
             self.final_confs_rdkit = defaultdict(list)
@@ -398,8 +429,10 @@ class BenchmarkRunner():
         self.final_confs_temp = final_confs
         for job in tqdm(jobs, total=len(jobs)):
             self.populate_results(self.worker_fn(job))
-        self.run(results)
-        # import ipdb; ipdb.set_trace()
+        self.run(results, reduction='min')
+        self.run(results, reduction='max')
+        self.run(results, reduction='mean')
+        self.run(results, reduction='std')
         return results
         
 
@@ -408,7 +441,27 @@ class BenchmarkRunner():
         amr_recall = rmsd_array.min(axis=1).mean()
         coverage_precision = np.mean(rmsd_array.min(axis=0, keepdims=True) < np.expand_dims(self.threshold, 1), axis=1)
         amr_precision = rmsd_array.min(axis=0).mean()
-
+        return coverage_recall, amr_recall, coverage_precision, amr_precision
+    
+    def calc_performance_stats_max(self, rmsd_array):
+        coverage_recall = np.mean(rmsd_array.max(axis=1, keepdims=True) < self.threshold, axis=0)
+        amr_recall = rmsd_array.max(axis=1).mean()
+        coverage_precision = np.mean(rmsd_array.max(axis=0, keepdims=True) < np.expand_dims(self.threshold, 1), axis=1)
+        amr_precision = rmsd_array.max(axis=0).mean()
+        return coverage_recall, amr_recall, coverage_precision, amr_precision
+    
+    def calc_performance_stats_mean(self, rmsd_array):
+        coverage_recall = np.mean(rmsd_array.mean(axis=1, keepdims=True) < self.threshold, axis=0)
+        amr_recall = rmsd_array.mean(axis=1).mean()
+        coverage_precision = np.mean(rmsd_array.mean(axis=0, keepdims=True) < np.expand_dims(self.threshold, 1), axis=1)
+        amr_precision = rmsd_array.mean(axis=0).mean()
+        return coverage_recall, amr_recall, coverage_precision, amr_precision
+    
+    def calc_performance_stats_std(self, rmsd_array):
+        coverage_recall = np.mean(rmsd_array.std(axis=1, keepdims=True) < self.threshold, axis=0)
+        amr_recall = rmsd_array.std(axis=1).mean()
+        coverage_precision = np.mean(rmsd_array.std(axis=0, keepdims=True) < np.expand_dims(self.threshold, 1), axis=1)
+        amr_precision = rmsd_array.std(axis=0).mean()
         return coverage_recall, amr_recall, coverage_precision, amr_precision
 
     def clean_confs(self, smi, confs):
@@ -420,10 +473,17 @@ class BenchmarkRunner():
                 good_ids.append(i)
         return [confs[i] for i in good_ids]
 
-    def run(self, results):
+    def run(self, results, reduction = 'min'):
         stats = []
         for res in results.values():
-            stats_ = self.calc_performance_stats(res['rmsd'])
+            if reduction == 'min':
+                stats_ = self.calc_performance_stats(res['rmsd'])
+            elif reduction == 'max':
+                stats_ = self.calc_performance_stats_max(res['rmsd'])
+            elif reduction == 'mean':
+                stats_ = self.calc_performance_stats_mean(res['rmsd'])
+            elif reduction == 'std':
+                stats_ = self.calc_performance_stats_std(res['rmsd'])
             cr, mr, cp, mp = stats_
             stats.append(stats_)
         coverage_recall, amr_recall, coverage_precision, amr_precision = zip(*stats)
@@ -431,47 +491,20 @@ class BenchmarkRunner():
             coverage_recall_vals = [stat[i] for stat in coverage_recall] + [0] * self.num_failures
             coverage_precision_vals = [stat[i] for stat in coverage_precision] + [0] * self.num_failures
             wandb.log({
-                f'{thresh} Recall Coverage Mean': np.mean(coverage_recall_vals) * 100,
-                f'{thresh} Recall Coverage Median': np.median(coverage_recall_vals) * 100,
-                f'{thresh} Recall AMR Mean': np.nanmean(amr_recall),
-                f'{thresh} Recall AMR Median': np.nanmedian(amr_recall),
-                f'{thresh} Precision Coverage Mean': np.mean(coverage_precision_vals) * 100,
-                f'{thresh} Precision Coverage Median': np.median(coverage_precision_vals) * 100,
-                f'{thresh} Precision AMR Mean': np.nanmean(amr_precision),
-                f'{thresh} Precision AMR Median': np.nanmedian(amr_precision),
+                f'{reduction} {thresh} Recall Coverage Mean': np.mean(coverage_recall_vals) * 100,
+                f'{reduction} {thresh} Recall Coverage Median': np.median(coverage_recall_vals) * 100,
+                f'{reduction} {thresh} Recall AMR Mean': np.nanmean(amr_recall),
+                f'{reduction} {thresh} Recall AMR Median': np.nanmedian(amr_recall),
+                f'{reduction} {thresh} Precision Coverage Mean': np.mean(coverage_precision_vals) * 100,
+                f'{reduction} {thresh} Precision Coverage Median': np.median(coverage_precision_vals) * 100,
+                f'{reduction} {thresh} Precision AMR Mean': np.nanmean(amr_precision),
+                f'{reduction} {thresh} Precision AMR Median': np.nanmedian(amr_precision),
             })
-            # print({
-            #     f'{thresh} Recall Coverage Mean': np.mean(coverage_recall_vals) * 100,
-            #     f'{thresh} Recall Coverage Median': np.median(coverage_recall_vals) * 100,
-            #     f'{thresh} Recall AMR Mean': np.nanmean(amr_recall),
-            #     f'{thresh} Recall AMR Median': np.nanmedian(amr_recall),
-            #     f'{thresh} Precision Coverage Mean': np.mean(coverage_precision_vals) * 100,
-            #     f'{thresh} Precision Coverage Median': np.median(coverage_precision_vals) * 100,
-            #     f'{thresh} Precision AMR Mean': np.nanmean(amr_precision),
-            #     f'{thresh} Precision AMR Median': np.nanmedian(amr_precision),
-            # })
-            # print("\n\n")
-            # print('threshold', thresh)
-            # coverage_recall_vals = [stat[i] for stat in coverage_recall] + [0] * num_failures
-            # coverage_precision_vals = [stat[i] for stat in coverage_precision] + [0] * num_failures
-            # print(f'Recall Coverage: Mean = {np.mean(coverage_recall_vals) * 100:.2f}, Median = {np.median(coverage_recall_vals) * 100:.2f}')
-            # print(f'Recall AMR: Mean = {np.nanmean(amr_recall):.4f}, Median = {np.nanmedian(amr_recall):.4f}')
-            # print(f'Precision Coverage: Mean = {np.mean(coverage_precision_vals) * 100:.2f}, Median = {np.median(coverage_precision_vals) * 100:.2f}')
-            # print(f'Precision AMR: Mean = {np.nanmean(amr_precision):.4f}, Median = {np.nanmedian(amr_precision):.4f}')
-        # import ipdb; ipdb.set_trace()
         wandb.log({
-            'Conformer Sets Compared': len(self.results),
-            'Model Failures': self.num_failures,
-            'Addittional Failures': np.isnan(amr_recall).sum()
-        })
-        # print({
-        #     'Conformer Sets Compared': len(results),
-        #     'Model Failures': self.num_failures,
-        #     'Addittional Failures': np.isnan(amr_recall).sum()
-        # })
-        # print("\n\n")
-        # print(len(results), 'conformer sets compared', num_failures, 'model failures', np.isnan(amr_recall).sum(),
-            # 'additional failures')
+            f'{reduction} Conformer Sets Compared': len(results),
+            f'{reduction} Model Failures': self.num_failures,
+            f'{reduction} Addittional Failures': np.isnan(amr_recall).sum()
+        }) # can replace wandb log with print
         return True
     
     def save(self):

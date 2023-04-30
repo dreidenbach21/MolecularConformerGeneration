@@ -717,3 +717,50 @@ def load_torsional_data_local(batch_size = 32, mode = 'train', data_dir='/home/d
                                             collate_fn = collate)
     return dataloader, data
 
+
+
+def cook_drugs(batch_size = 32, mode = 'train', data_dir='/home/dannyreidenbach/data/DRUGS/drugs/',
+                dataset='drugs', limit_mols=0, log_dir='./test_run', num_workers=1, restart_dir=None, seed=0,
+                 split_path='/home/dannyreidenbach/data/DRUGS/split.npy',
+                 std_pickles=None):
+# def load_torsional_data(batch_size = 32, mode = 'train', data_dir='/home/dreidenbach/data/torsional_diffusion/QM9/qm9/',
+#                 dataset='qm9', limit_mols=0, log_dir='./test_run', num_workers=1, restart_dir=None, seed=0,
+#                  split_path='/home/dreidenbach/data/torsional_diffusion/QM9/split.npy',
+#                  std_pickles=None): #   std_pickles='/home/dannyreidenbach/data/QM9/standardized_pickles'):
+    types = qm9_types if dataset == 'qm9' else drugs_types
+    use_diffusion_angle_def = False
+    data = ConformerDataset(data_dir, split_path, mode, dataset=dataset,
+                                   types=types, transform=None,
+                                   num_workers=num_workers,
+                                   limit_molecules=limit_mols, #args.limit_train_mols,
+                                   cache_path=None, #args.cache,
+                                   name=f'{dataset}_{mode}_{limit_mols}_final',
+                                   pickle_dir=std_pickles,
+                                   use_diffusion_angle_def=use_diffusion_angle_def,
+                                   boltzmann_resampler=None)
+    dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=num_workers,
+                                            collate_fn = collate)
+    return dataloader, data
+
+
+def cook_drugs_local(batch_size = 32, mode = 'train', data_dir='/home/dreidenbach/data/torsional_diffusion/DRUGS/drugs/',
+                dataset='drugs', limit_mols=0, log_dir='./test_run', num_workers=1, restart_dir=None, seed=0,
+                 split_path='/home/dreidenbach/data/torsional_diffusion/DRUGS/split.npy',
+                 std_pickles=None): #   std_pickles='/home/dannyreidenbach/data/QM9/standardized_pickles'):
+    types = qm9_types if dataset == 'qm9' else drugs_types
+    use_diffusion_angle_def = False
+    data = ConformerDataset(data_dir, split_path, mode, dataset=dataset,
+                                   types=types, transform=None,
+                                   num_workers=num_workers,
+                                   limit_molecules=limit_mols, #args.limit_train_mols,
+                                   cache_path=None, #args.cache,
+                                   name=f'{dataset}_{mode}_{limit_mols}_final',
+                                   pickle_dir=std_pickles,
+                                   use_diffusion_angle_def=use_diffusion_angle_def,
+                                   raw_dir='/home/dreidenbach/data/torsional_diffusion/QM9/dgl', 
+                                   save_dir='/home/dreidenbach/data/torsional_diffusion/QM9/dgl',
+                                   boltzmann_resampler=None)
+    
+    dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=num_workers,
+                                            collate_fn = collate)
+    return dataloader, data

@@ -193,7 +193,8 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
             
             print("Test Benchmarks")
             BENCHMARK.generate(model)
-            # TODO: Save Model
+        model_path = f'/home/dannyreidenbach/mcg/coagulation/scripts/model_ckpt/{NAME}_{epoch}.pt'
+        torch.save(model.state_dict(), model_path)
         
 
 
