@@ -317,8 +317,8 @@ class VAE(nn.Module):
         # print("\n[Enocoder] prior logvar mlp weight norms", torch.norm(self.prior_logvar_V.linear.weight), torch.norm(self.prior_logvar_V.linear2.weight))
         # print("\n[Enocoder] posterior logvar mlp weight norms", torch.norm(self.posterior_logvar_V.linear.weight), torch.norm(self.posterior_logvar_V.linear2.weight))
         if validation:
-            Z_V = self.reparameterize(prior_mean_V, prior_logvar_V)
-            Z_h = self.reparameterize(prior_mean_h, prior_logvar_h)
+            Z_V = self.reparameterize(prior_mean_V, prior_logvar_V, mean_only=True)
+            Z_h = self.reparameterize(prior_mean_h, prior_logvar_h, mean_only=True)
         else:
             Z_V = self.reparameterize(posterior_mean_V, posterior_logvar_V)
             Z_h = self.reparameterize(posterior_mean_h, posterior_logvar_h)
@@ -351,7 +351,9 @@ class VAE(nn.Module):
             })
         return results, geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg
 
-    def reparameterize(self, mean, logvar, scale = 1.0):
+    def reparameterize(self, mean, logvar, scale = 1.0, mean_only = False):
+        if mean_only:
+            return mean
         if self.kl_softplus:
             sigma = 1e-12 + F.softplus(scale*logvar / 2)
         else:

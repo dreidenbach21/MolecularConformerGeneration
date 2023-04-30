@@ -1,8 +1,8 @@
 # my_config.yaml
 defaults:
-  - encoder: medium #medium #small
-  - decoder: medium #medium #small
-  - vae: base
+  - encoder: small #medium #small
+  - decoder: small #medium #small
+  - vae: mim
   - optimizer: base
   - losses: base
   - data: qm9
@@ -12,7 +12,7 @@ coordinates: delta #absolute # or delta or double
 hydra:
   job:
     env_set: 
-      CUDA_VISIBLE_DEVICES: 0
+      CUDA_VISIBLE_DEVICES: 1
   run:
     dir: outputs/${wandb.name}_${now:%Y-%m-%d_%H-%M-%S}
   job_logging:
@@ -33,5 +33,5 @@ hydra:
 
 wandb:
   project: MCG
-  name: QM9_full_vae_base_medium
-  notes: testing full QM9 with standard delta coords + teacher forcing. KL Loss at 1e-3 and no gradients through any kabsch steps. Benchmarking will be done every epoch 
+  name: QM9_full_mim
+  notes: testing small model with mim loss
