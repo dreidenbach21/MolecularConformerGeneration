@@ -109,11 +109,11 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     # self.optim_steps += 1
     # torch.autograd.set_detect_anomaly(True)
     
-    kl_annealing = False
+    kl_annealing = True
     kl_weight = 1e-6
-    kl_annealing_rate = 1e-5
+    kl_annealing_rate = 1e-3
     kl_annealing_interval = 1
-    kl_cap = 1e-3
+    kl_cap = 1e-1
     for epoch in range(cfg.data['epochs']):
         print("Epoch", epoch)
         if kl_annealing and epoch > 0 and epoch % kl_annealing_interval == 0:

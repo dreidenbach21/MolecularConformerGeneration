@@ -33,5 +33,5 @@ hydra:
 
 wandb:
   project: MCG
-  name: local_benchmark_test
+  name: local_benchmark_test_all
   notes: testing data + local benchmarking

@@ -70,7 +70,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     #         self.step_schedulers() --> self.lr_scheduler.step()
     # self.optim.zero_grad()
     # self.optim_steps += 1
-    torch.autograd.set_detect_anomaly(True)
+    # torch.autograd.set_detect_anomaly(True)
     train_loss_log_name = NAME + "_train"
     val_loss_log_name =  NAME + "_val"
     train_loss_log_total, val_loss_log_total = [], []
