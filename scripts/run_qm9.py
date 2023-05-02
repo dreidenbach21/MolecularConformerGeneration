@@ -110,17 +110,25 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     # torch.autograd.set_detect_anomaly(True)
     
     kl_annealing = True
-    kl_weight = 1e-4
+    kl_weight = 1e-6
     kl_annealing_rate = 1e-3
     kl_annealing_interval = 1
     kl_cap = 1e-1
+    
+    dist_weight = 1e-6
+    dist_annealing_rate = 0.1
+    dist_cap = 0.5
     for epoch in range(cfg.data['epochs']):
         print("Epoch", epoch)
         if kl_annealing and epoch > 0 and epoch % kl_annealing_interval == 0:
             kl_weight += kl_annealing_rate
             kl_weight = min(kl_weight, kl_cap)
+            
+            dist_weight += dist_annealing_rate
+            dist_weight = min(dist_weight, cap)
         if kl_annealing:
             model.kl_v_beta = kl_weight
+            model.lambda_distance = dist_weight
         train_loss_log, val_loss_log = [], []
         count = 0
         for A_batch, B_batch in train_loader:

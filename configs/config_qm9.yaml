@@ -12,7 +12,7 @@ coordinates: delta #absolute # or delta or double
 hydra:
   job:
     env_set: 
-      CUDA_VISIBLE_DEVICES: 8
+      CUDA_VISIBLE_DEVICES: 0
   run:
     dir: outputs/${wandb.name}_${now:%Y-%m-%d_%H-%M-%S}
   job_logging:
@@ -33,5 +33,5 @@ hydra:
 
 wandb:
   project: MCG
-  name: QM9_full_med_vae_anneal_distance
-  notes: trying out kl annealing on medium model
+  name: QM9_med_vae_kl_dist_anneal
+  notes: trying out kl annealing on medium model with distance annealing

@@ -322,11 +322,11 @@ class Decoder(nn.Module):
             r = id[0]
             if r == -1:
                 # references.append(torch.zeros_like(g.ndata['x_cc']))
-                g.ndata['reference_point'] = torch.zeros_like(g.ndata['x_cc'])
+                g.ndata['reference_point'] = torch.zeros_like(g.ndata['x_cc']).to(g.device)
             else:
                 point = molecule.ndata['x_cc'][r].reshape(1,-1)
                 # references.append(point.repeat(g.ndata['x_cc'].shape[0]))
-                g.ndata['reference_point'] = point.repeat(g.ndata['x_cc'].shape[0], 1)
+                g.ndata['reference_point'] = point.repeat(g.ndata['x_cc'].shape[0], 1).to(g.device)
             result.append(g)
         return dgl.batch(result).to(self.device) #, references
 

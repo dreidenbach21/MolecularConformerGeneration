@@ -187,8 +187,27 @@ class IEGMN_Bidirectional_Double_Delta_Layer(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(self.out_feats_dim_h, 1)
             )
-        F = 32
-        self.double_net = nn.Sequential(VNLinear(3, F), VN_MLP(F, 3, 3, 3, leaky = False, use_batchnorm = False))
+        # F = 32
+        # self.double_net = nn.Sequential(VNLinear(3, F), VN_MLP(F, 3, 3, 3, leaky = False, use_batchnorm = False))
+        A2_edge_mlp_input_dim = (invar_feats_dim_h * 2) #+ edge_feats_dim #! removed the edge features
+        if self.use_dist_in_layers:# and self.A_evolve: #TRUE and TRUE
+            A2_edge_mlp_input_dim += 3*len(self.all_sigmas_dist)
+        # if self.standard_norm_order: # TRUE
+        self.double_net = nn.Sequential(
+            nn.Linear(A2_edge_mlp_input_dim, self.out_feats_dim_h),
+            get_layer_norm(layer_norm, self.out_feats_dim_h),
+            get_non_lin(nonlin, leakyrelu_neg_slope),
+            nn.Dropout(dropout),
+            nn.Linear(self.out_feats_dim_h, self.out_feats_dim_h),
+            get_layer_norm(layer_norm, self.out_feats_dim_h),
+        )
+        self.double_coords = nn.Sequential(
+            nn.Linear(self.out_feats_dim_h, self.out_feats_dim_h),
+            get_layer_norm(layer_norm_coords, self.out_feats_dim_h),
+            get_non_lin(nonlin, leakyrelu_neg_slope),
+            nn.Dropout(dropout),
+            nn.Linear(self.out_feats_dim_h, 1)
+        )
         self.apply(self._init_weights)
         
     def _init_weights(self, module):
@@ -225,6 +244,22 @@ class IEGMN_Bidirectional_Double_Delta_Layer(nn.Module):
             return {
                 'msg_cc': self.A_edge_mlp(torch.cat([edges.src['feat_cc'], edges.dst['feat_cc'], edges.data['feat']], dim=1))} #TODO: fix edge data what signal do we use?
 
+    def apply_delta_edges_A(self, edges):
+        # ipdb.set_trace()
+        x_rel_mag = edges.data['x_rel_delta'] ** 2
+        x_rel_mag = torch.sum(x_rel_mag, dim=1, keepdim=True)
+        x_rel_mag = torch.cat([torch.exp(-x_rel_mag / sigma) for sigma in self.all_sigmas_dist], dim=-1)
+        
+        x_rel_ref_mag = edges.data['x_rel_ref_delta'] ** 2
+        x_rel_ref_mag = torch.sum(x_rel_ref_mag, dim=1, keepdim=True)
+        x_rel_ref_mag = torch.cat([torch.exp(-x_rel_ref_mag / sigma) for sigma in self.all_sigmas_dist], dim=-1)
+        
+        self_ref_mag = (edges.src['first_delta'] - edges.src['reference_point']) ** 2
+        self_ref_mag = torch.sum(self_ref_mag, dim=1, keepdim=True)
+        self_ref_mag = torch.cat([torch.exp(-self_ref_mag / sigma) for sigma in self.all_sigmas_dist], dim=-1)
+        return {'msg_delta': self.A_edge_mlp(
+            torch.cat([edges.src['feat_cc'], edges.dst['feat_cc'], x_rel_mag, x_rel_ref_mag, self_ref_mag], dim=1))} 
+            
     def apply_edges_B(self, edges):
         if self.use_dist_in_layers:# and self.B_evolve:
             x_rel_mag = edges.data['x_rel_cc'] ** 2
@@ -255,6 +290,11 @@ class IEGMN_Bidirectional_Double_Delta_Layer(nn.Module):
         edge_coef_B = self.coords_mlp_B(edges.data['msg_cc'])  # \phi^x(m_{i->j})
         x_rel = self.B_coords_norm(edges.data['x_rel_cc']) if self.normalize_coordinate_update else edges.data['x_rel_cc']
         return {'m_cc': x_rel * edge_coef_B}  # (x_i - x_j) * \phi^x(m_{i->j})
+    
+    def update_x_delta_moment_A(self, edges):
+        edge_coef_A = self.coords_mlp_A(edges.data['msg_delta'])  # \phi^x(m_{i->j})
+        x_rel = self.A_coords_norm(edges.data['x_rel_delta']) if self.normalize_coordinate_update else edges.data['x_rel_delta']
+        return {'m_delta': x_rel * edge_coef_A}  # (x_i - x_j) * \phi^x(m_{i->j})
 
 
     def single_forward(self, A_graph, coords_A, h_feats_A, original_A_node_features, orig_coords_A, geometry_graph_A = None, mask = None):
@@ -392,9 +432,18 @@ class IEGMN_Bidirectional_Double_Delta_Layer(nn.Module):
             # Inspired by https://arxiv.org/pdf/2108.10521.pdf we use original X and not only graph.ndata['x_now']
             # x_evolved_A = self.x_connection_init * orig_coords_A + (1. - self.x_connection_init) * A_graph.ndata['x_now_cc'] + A_graph.ndata['x_update_cc']
             x_evolved_A = A_graph.ndata['x_ref'] + A_graph.ndata['x_update_cc']
+            A_graph.ndata['first_delta'] = x_evolved_A
             # import ipdb; ipdb.set_trace()
-            first_delta = x_evolved_A - A_graph.ndata['reference_point']
-            x_evolved_A = A_graph.ndata['reference_point'] + self.double_net(first_delta.unsqueeze(2)).squeeze(2)
+            A_graph.apply_edges(fn.u_sub_v('first_delta', 'first_delta', 'x_rel_delta'))  # x_i - x_j
+            A_graph.apply_edges(fn.u_sub_v('first_delta', 'reference_point', 'x_rel_ref_delta'))
+            A_graph.apply_edges(self.apply_delta_edges_A)
+            A_graph.update_all(self.update_x_delta_moment_A, fn.mean('m_delta', 'x_update_delta'))
+            x_evolved_A = A_graph.ndata['reference_point'] + A_graph.ndata['x_update_delta']
+            
+            # first_delta = x_evolved_A - A_graph.ndata['reference_point']
+            # x_evolved_A = A_graph.ndata['reference_point'] + self.double_net(first_delta.unsqueeze(2)).squeeze(2)
+            
+            
             # print("            [DEC MPNN] update A ", torch.min(A_graph.ndata['x_update_cc']).item(), torch.max(A_graph.ndata['x_update_cc']).item(), torch.norm(A_graph.ndata['x_update_cc'], 2).item())
             # B_graph.update_all(self.update_x_moment_B, fn.mean('m_cc', 'x_update_cc'))
             # # print("            [DEC MPNN] orig B ", torch.min(orig_coords_B).item(), torch.max(orig_coords_B).item(), torch.norm(orig_coords_B, 2).item())
