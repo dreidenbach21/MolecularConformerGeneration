@@ -132,19 +132,17 @@ class VAE(nn.Module):
         # ipdb.set_trace()
         rdkit_loss = [self.rmsd(m.ndata['x_ref'], m.ndata['x_true'], align = True).unsqueeze(0) for m in dgl.unbatch(rdkit_reference)]
         rdkit_loss = self.lambda_global_mse*torch.cat(rdkit_loss).mean()
-        # TODO no longer need to pre calculate
-        # rdkit_loss2 = torch.mean(torch.cat([x.ndata['rdkit_loss'][0].unsqueeze(0) for x in dgl.unbatch(rdkit_reference)])) # mean instead of sum over batch
-        # assert(rdkit_loss.cpu().item() == rdkit_loss2.cpu().item())
-        # distance_loss = self.lambda_distance*self.distance_loss(generated_molecule, geometry_graph)
+
+        distance_loss = self.lambda_distance*self.distance_loss(generated_molecule, geometry_graph)
         # ar_dist_loss = self.lambda_ar_distance*ar_dist_loss #! Set to 0 for now
         # print("[Loss Func] distance", distance_loss)
         # print("[Loss Func] ar distance", ar_dist_loss)
-        # loss += distance_loss #+ ar_dist_loss
+        loss += distance_loss #+ ar_dist_loss
         if log_latent_stats:
             loss_results = {
                 'latent reg loss': kl_loss.cpu(),
                 'kl_unclamped': self.kl_v_beta*kl_v_unclamped.cpu(),
-                # 'global_distance': distance_loss.cpu(),
+                'global_distance': distance_loss.cpu(),
                 # 'ar_distance': ar_dist_loss.cpu(),
                 'global_mse': self.lambda_global_mse*global_mse.cpu(),
                 'ar_mse': self.lambda_ar_mse*ar_mse.cpu(),

@@ -4,7 +4,7 @@ aligned_ar_mse: True
 ar_mse_weight: 0 #1
 
 aligned_global_distance: True
-distance_weight: 0 #1
+distance_weight: 0.5 #1
 aligned_ar_distance: True
 ar_distance_weight: 0 #0.3
 

@@ -7,7 +7,7 @@ import torch
 import wandb
 import random
 import logging
-from utils.torsional_diffusion_data_all import cook_drugs, cook_drugs_local  # , QM9_DIMS, DRUG_DIMS
+from utils.torsional_diffusion_data_all import cook_drugs, cook_drugs_local, cook_drugs_local_fast # , QM9_DIMS, DRUG_DIMS
 from model.vae import VAE
 import datetime
 import torch.multiprocessing as mp
@@ -20,7 +20,7 @@ def load_data(cfg):
     #mp.set_start_method('spawn') # use 'spawn' method instead of 'fork'
     #mp.set_sharing_strategy('file_system') 
     print("Loading DRUGs...")
-    train_loader, train_data = cook_drugs_local(batch_size=cfg['train_batch_size'], mode='train')
+    train_loader, train_data = cook_drugs_local_fast(batch_size=cfg['train_batch_size'], mode='train') #cook_drugs_local
     val_loader, val_data = cook_drugs_local(batch_size=cfg['val_batch_size'], mode='val')
     print("Loading DRUGS --> Done")
     return train_loader, train_data, val_loader, val_data

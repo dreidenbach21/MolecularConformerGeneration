@@ -93,7 +93,7 @@ class BenchmarkRunner():
         self.dataset = dataset
         self.n_workers = 1
         self.D, self.F = D, F
-        self.name = f'{dataset}_full'
+        self.name = f'{dataset}_full'#_no_mmff_2'
         self.batch_size = batch_size
         self.only_alignmol = False
         self.save_dir = save_dir
@@ -167,11 +167,12 @@ class BenchmarkRunner():
                     results_A.append(None)
                     self.problem_smiles.add(smi)
                     continue
-                A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
                 try:
+                    A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
+                # try:
                     A_cg = conditional_coarsen_3d(data, A_frag_ids, A_cg_map, A_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
                 except:
-                    print("AddHs Data Issue: ground truth molecule does not have full Hs", idx, smi)
+                    print("Coarsen Issue AddHs Data Issue: ground truth molecule does not have full Hs", idx, smi)
                     bad_idx_A.append(idx)
                     results_A.append(None)
                     self.problem_smiles.add(smi)
@@ -232,6 +233,7 @@ class BenchmarkRunner():
             
             bad_idx_B2 = []
             results_B2 = []
+            # data_B2s = self.featurize_mol(smi, true_confs, use_rdkit_coords = True)
             for idx, data_B in enumerate(data_Bs):
                 if idx in set(bad_idx_A) or idx in set(bad_idx_B):
                     bad_idx_B2.append(idx)
@@ -281,7 +283,7 @@ class BenchmarkRunner():
                 continue
             self.datapoints.extend([(k, vv) for vv in v])
         print('Fetched', len(self.datapoints), 'mols successfully')
-        print('Example', self.datapoints[0])
+        # print('Example', self.datapoints[0])
         
     def featurize_mol(self, smi, moles, use_rdkit_coords = False):
         name = smi
@@ -301,13 +303,17 @@ class BenchmarkRunner():
             # pos.append(torch.tensor(mol.GetConformer().GetPositions(), dtype=torch.float))
             correct_mol = mol
             check_ = correct_mol.GetConformer().GetPositions()
-            mol_features = featurize_mol(correct_mol, self.types, use_rdkit_coords = use_rdkit_coords)
+            # mol_features = featurize_mol(correct_mol, self.types, use_rdkit_coords = use_rdkit_coords)
+            #! Use MMFF makes things worse????
+            mol_features = featurize_mol(correct_mol, self.types, use_rdkit_coords = use_rdkit_coords, use_mmff = False)
             if mol_features is not None:
                 try:
                     cmpt = correct_mol.GetConformer().GetPositions()
                     if use_rdkit_coords:
-                        # a = cmpt-np.mean(cmpt, axis = 0)
-                        # b = mol_features.ndata['x_ref'].numpy()
+                        a = mol_features.ndata['x_true'].numpy() #cmpt-np.mean(cmpt, axis = 0)
+                        b = mol_features.ndata['x_ref'].numpy()
+                        if np.mean((a - b) ** 2) < 1e-5:
+                            import ipdb; ipdb.set_trace()
                         # assert(np.mean((a - b) ** 2) < 1e-7 ) # This fails since the featurization aligns the rdkit so the MSE is not preserved
                         cmpt = check_
                     a = cmpt-np.mean(cmpt, axis = 0)
@@ -325,12 +331,13 @@ class BenchmarkRunner():
         #     import ipdb; ipdb.set_trace()
         return datas
             
-    def generate(self, model, rdkit_only = False, save = False):
+    def generate(self, model, rdkit_only = False, save = False, use_wandb = True):
         if not rdkit_only:
             if save and os.path.exists(os.path.join(self.save_dir, f'{self.name}_random_weights_gen.bin')):
                 molecules, _ = dgl.data.utils.load_graphs(self.save_dir + f'/{self.name}_random_weights_gen.bin')
             else:
                 molecules = []
+                distances = []
                 with torch.no_grad():
                     for A_batch, B_batch in self.dataloader:
                         A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
@@ -347,21 +354,28 @@ class BenchmarkRunner():
                         # losses['Test Loss'] = loss.cpu()
                         # wandb.log({'test_' + key: value for key, value in losses.items()})
                         molecules.extend(dgl.unbatch(generated_molecule.cpu()))
+                        distances.extend(dgl.unbatch(geo_A.cpu()))
                 if save:
                     dgl.data.utils.save_graphs(self.save_dir + f'/{self.name}_random_weights_gen.bin', molecules)
             self.final_confs = defaultdict(list)
             # self.final_confs_rdkit = defaultdict(list)
+            self.generated_molecules = molecules
+            self.generated_molecules_distances = distances
             for smi, data in zip(self.smiles, molecules):
                 self.final_confs[smi].append(dgl_to_mol(copy.deepcopy(self.true_mols[smi][0]), data, mmff=False, rmsd=False, copy=True))
                 # self.final_confs_rdkit[smi].append(dgl_to_mol(copy.deepcopy(self.true_mols[smi][0]), data, mmff=False, rmsd=False, copy=True, key = 'x_ref'))
-            self.results_model = self.calculate(self.final_confs)
+            self.results_model = self.calculate(self.final_confs, use_wandb = use_wandb)
             # self.results_rdkit = self.calculate(self.final_confs_rdkit)
         else:
             molecules = []
+            distances = []
             for A_batch, B_batch in self.dataloader:
                 # A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
                 B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids = B_batch
-                molecules.extend(dgl.unbatch(B_graph))
+                molecules.extend(dgl.unbatch(B_graph.cpu()))
+                distances.extend(dgl.unbatch(geo_B.cpu()))
+            self.rdkit_molecules = molecules
+            self.rdkit_molecules_distances = distances
             self.final_confs_rdkit = defaultdict(list)
             for smi, data in zip(self.smiles, molecules):
                 self.final_confs_rdkit[smi].append(dgl_to_mol(copy.deepcopy(self.true_mols[smi][0]), data, mmff=False, rmsd=False, copy=True, key = 'x_ref'))
@@ -370,7 +384,7 @@ class BenchmarkRunner():
             
         
         
-    def calculate(self, final_confs):
+    def calculate(self, final_confs, use_wandb = True):
         rdkit_smiles = self.test_data.smiles.values
         corrected_smiles = self.test_data.corrected_smiles.values
         self.num_failures = 0
@@ -429,10 +443,12 @@ class BenchmarkRunner():
         self.final_confs_temp = final_confs
         for job in tqdm(jobs, total=len(jobs)):
             self.populate_results(self.worker_fn(job))
-        self.run(results, reduction='min')
-        self.run(results, reduction='max')
-        self.run(results, reduction='mean')
-        self.run(results, reduction='std')
+        self.run(results, reduction='min', use_wandb = use_wandb)
+        self.run(results, reduction='max', use_wandb = use_wandb)
+        self.run(results, reduction='mean', use_wandb = use_wandb)
+        self.run(results, reduction='std', use_wandb = use_wandb)
+        # import ipdb; ipdb.set_trace()
+        # self.run(results, reduction='min', use_wandb = use_wandb)
         return results
         
 
@@ -473,7 +489,7 @@ class BenchmarkRunner():
                 good_ids.append(i)
         return [confs[i] for i in good_ids]
 
-    def run(self, results, reduction = 'min'):
+    def run(self, results, reduction = 'min', use_wandb = True):
         stats = []
         for res in results.values():
             if reduction == 'min':
@@ -490,21 +506,40 @@ class BenchmarkRunner():
         for i, thresh in enumerate(self.threshold):
             coverage_recall_vals = [stat[i] for stat in coverage_recall] + [0] * self.num_failures
             coverage_precision_vals = [stat[i] for stat in coverage_precision] + [0] * self.num_failures
+            if use_wandb:
+                wandb.log({
+                    f'{reduction} {thresh} Recall Coverage Mean': np.mean(coverage_recall_vals) * 100,
+                    f'{reduction} {thresh} Recall Coverage Median': np.median(coverage_recall_vals) * 100,
+                    f'{reduction} {thresh} Recall AMR Mean': np.nanmean(amr_recall),
+                    f'{reduction} {thresh} Recall AMR Median': np.nanmedian(amr_recall),
+                    f'{reduction} {thresh} Precision Coverage Mean': np.mean(coverage_precision_vals) * 100,
+                    f'{reduction} {thresh} Precision Coverage Median': np.median(coverage_precision_vals) * 100,
+                    f'{reduction} {thresh} Precision AMR Mean': np.nanmean(amr_precision),
+                    f'{reduction} {thresh} Precision AMR Median': np.nanmedian(amr_precision),
+                })
+            else:
+                print({
+                    f'{reduction} {thresh} Recall Coverage Mean': np.mean(coverage_recall_vals) * 100,
+                    f'{reduction} {thresh} Recall Coverage Median': np.median(coverage_recall_vals) * 100,
+                    f'{reduction} {thresh} Recall AMR Mean': np.nanmean(amr_recall),
+                    f'{reduction} {thresh} Recall AMR Median': np.nanmedian(amr_recall),
+                    f'{reduction} {thresh} Precision Coverage Mean': np.mean(coverage_precision_vals) * 100,
+                    f'{reduction} {thresh} Precision Coverage Median': np.median(coverage_precision_vals) * 100,
+                    f'{reduction} {thresh} Precision AMR Mean': np.nanmean(amr_precision),
+                    f'{reduction} {thresh} Precision AMR Median': np.nanmedian(amr_precision),
+                })
+        if use_wandb:
             wandb.log({
-                f'{reduction} {thresh} Recall Coverage Mean': np.mean(coverage_recall_vals) * 100,
-                f'{reduction} {thresh} Recall Coverage Median': np.median(coverage_recall_vals) * 100,
-                f'{reduction} {thresh} Recall AMR Mean': np.nanmean(amr_recall),
-                f'{reduction} {thresh} Recall AMR Median': np.nanmedian(amr_recall),
-                f'{reduction} {thresh} Precision Coverage Mean': np.mean(coverage_precision_vals) * 100,
-                f'{reduction} {thresh} Precision Coverage Median': np.median(coverage_precision_vals) * 100,
-                f'{reduction} {thresh} Precision AMR Mean': np.nanmean(amr_precision),
-                f'{reduction} {thresh} Precision AMR Median': np.nanmedian(amr_precision),
-            })
-        wandb.log({
-            f'{reduction} Conformer Sets Compared': len(results),
-            f'{reduction} Model Failures': self.num_failures,
-            f'{reduction} Addittional Failures': np.isnan(amr_recall).sum()
-        }) # can replace wandb log with print
+                f'{reduction} Conformer Sets Compared': len(results),
+                f'{reduction} Model Failures': self.num_failures,
+                f'{reduction} Additional Failures': np.isnan(amr_recall).sum()
+            }) # can replace wandb log with
+        else:
+            print({
+                f'{reduction} Conformer Sets Compared': len(results),
+                f'{reduction} Model Failures': self.num_failures,
+                f'{reduction} Additional Failures': np.isnan(amr_recall).sum()
+            }) # can replace wandb log with
         return True
     
     def save(self):
@@ -565,7 +600,11 @@ class BenchmarkRunner():
                         err = np.mean((a - b) ** 2)
                         if err < 1e-7 :
                             print(f"[RMSD low crude error] {smi} {correct_smi} {i_true} = {err}")
+                            import ipdb; ipdb.set_trace()
                         rmsd = AllChem.GetBestRMS(Chem.RemoveHs(tc), Chem.RemoveHs(mc))
+                        if rmsd < 1e-2:
+                            import ipdb; ipdb.set_trace()
+                        # print("[Best RMSD , MSE ]", rmsd, err)
                     rmsds.append(rmsd)
                 except:
                     print('Additional failure', smi, correct_smi)

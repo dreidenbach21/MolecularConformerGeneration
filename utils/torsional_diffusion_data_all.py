@@ -85,7 +85,7 @@ def get_bond_idx(m, i, j):
 
 QM9_DIMS = ([5, 4, 2, 8, 6, 8, 4, 6, 5], 0)
 DRUG_DIMS = ([35, 4, 2, 8, 6, 8, 4, 6, 5], 0)
-def featurize_mol(mol, types=drugs_types, use_rdkit_coords = False, seed = 0, radius = 4, max_neighbors=None, old_rdkit = False):
+def featurize_mol(mol, types=drugs_types, use_rdkit_coords = False, seed = 0, radius = 4, max_neighbors=None, old_rdkit = False, use_mmff = True):
     if type(types) is str:
         if types == 'qm9':
             types = qm9_types
@@ -147,7 +147,7 @@ def featurize_mol(mol, types=drugs_types, use_rdkit_coords = False, seed = 0, ra
         if old_rdkit:
             rdkit_coords = get_rdkit_coords_old(mol, seed)
         else:
-            rdkit_coords = get_rdkit_coords(mol, seed) #.numpy()
+            rdkit_coords = get_rdkit_coords(mol, seed, use_mmff) #.numpy()
         if rdkit_coords is None:
             return None
         R, t = rigid_transform_Kabsch_3D(rdkit_coords.T, true_lig_coords.T)
@@ -158,7 +158,7 @@ def featurize_mol(mol, types=drugs_types, use_rdkit_coords = False, seed = 0, ra
 #         # print('LOSS kabsch RMSD between rdkit ligand and true ligand is ', np.sqrt(np.sum((lig_coords - true_lig_coords) ** 2, axis=1).mean()).item())
         loss = torch.nn.MSELoss()
         loss_error = loss(torch.from_numpy(true_lig_coords), torch.from_numpy(lig_coords)).cpu().detach().numpy().item()
-        #print('LOSS kabsch MSE between rdkit ligand and true ligand is ', loss_error )
+        # print('LOSS kabsch MSE between rdkit ligand and true ligand is ', loss_error )
     else:
         lig_coords = true_lig_coords
     num_nodes = lig_coords.shape[0]
@@ -167,6 +167,10 @@ def featurize_mol(mol, types=drugs_types, use_rdkit_coords = False, seed = 0, ra
     if remove_centroid:
         lig_coords -= np.mean(lig_coords, axis = 0)
         true_lig_coords -= np.mean(true_lig_coords, axis = 0)
+    if use_rdkit_coords:
+        loss = torch.nn.MSELoss()
+        loss_error = loss(torch.from_numpy(true_lig_coords), torch.from_numpy(lig_coords)).cpu().detach().numpy().item()
+        # print('[No MEAN] LOSS kabsch MSE between rdkit ligand and true ligand is ', loss_error )
         
     assert lig_coords.shape[1] == 3
     distance = spa.distance.cdist(lig_coords, lig_coords)
@@ -358,17 +362,38 @@ class ConformerDataset(DGLDataset):
             #     pool.close()
             #     # wait for all tasks to complete and processes to close
             #     pool.join()
-            # datapoints = [item for sublist in results for item in sublist if sublist[0] is not None]   
+            # datapoints = [item for sublist in results for item in sublist if sublist[0] is not None] 
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+                # Create a tqdm progress bar for the list of SMILES strings
+                with tqdm(total=len(smiles)) as pbar:
+                    # Submit the jobs to the thread pool
+                    futures = [executor.submit(self.filter_smiles_mp, entry) for entry in smiles]
+
+                    # Iterate over the futures and update the progress bar
+                    for future in concurrent.futures.as_completed(futures):
+                        pbar.update(1)
+
+                # Wait for the jobs to complete and extract the resulting molecules
+                molecules = [future.result() for future in concurrent.futures.as_completed(futures)]
+                datapoints = [item for sublist in molecules for item in sublist if sublist is not None and sublist[0] is not None]
+                
+
         else:
-            if num_workers > 1:
-                p = Pool(num_workers)
-                p.__enter__()
+            # if num_workers > 1:
+            #     p = Pool(num_workers)
+            #     p.__enter__()
+            count = 0
             with tqdm_outer.tqdm(total=len(smiles)) as pbar:
                 map_fn = p.imap if num_workers > 1 else map
                 for t in map_fn(self.filter_smiles_mp, smiles):
                     if t and t[0] is not None:
     #                     datapoints.append(t)
                         datapoints.extend(t)
+                        count += 1
+                        if count > 0 and count % 10000 == 0:
+                            print("Saving...", count)
+                            self.datapoints = datapoints
+                            self.save()
                     pbar.update()
             if num_workers > 1: p.__exit__(None, None, None)
         print('Fetched', len(datapoints), 'mols successfully')
@@ -453,8 +478,14 @@ class ConformerDataset(DGLDataset):
                 results_A.append(None)
                 continue
             # print("filter SMILE", smile)
-            A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
-            A_cg = conditional_coarsen_3d(data, A_frag_ids, A_cg_map, A_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
+            try:
+                A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
+                A_cg = conditional_coarsen_3d(data, A_frag_ids, A_cg_map, A_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
+            except:
+                self.failures['coarsening error'] += 1
+                bad_idx_A.append(idx)
+                results_A.append(None)
+                continue
             # xcc = mol.GetConformer().GetPositions()
             # print("filter mol POS2", xcc == xc)
             geometry_graph_A = get_geometry_graph(mol)
@@ -755,6 +786,29 @@ def cook_drugs_local(batch_size = 32, mode = 'train', data_dir='/home/dreidenbac
                                    limit_molecules=limit_mols, #args.limit_train_mols,
                                    cache_path=None, #args.cache,
                                    name=f'{dataset}_{mode}_{limit_mols}_final',
+                                   pickle_dir=std_pickles,
+                                   use_diffusion_angle_def=use_diffusion_angle_def,
+                                   raw_dir='/home/dreidenbach/data/torsional_diffusion/QM9/dgl', 
+                                   save_dir='/home/dreidenbach/data/torsional_diffusion/QM9/dgl',
+                                   boltzmann_resampler=None)
+    
+    dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=num_workers,
+                                            collate_fn = collate)
+    return dataloader, data
+
+
+def cook_drugs_local_fast(batch_size = 32, mode = 'train', data_dir='/home/dreidenbach/data/torsional_diffusion/DRUGS/drugs/',
+                dataset='drugs', limit_mols=0, log_dir='./test_run', num_workers=10, restart_dir=None, seed=0,
+                 split_path='/home/dreidenbach/data/torsional_diffusion/DRUGS/split.npy',
+                 std_pickles=None): #   std_pickles='/home/dannyreidenbach/data/QM9/standardized_pickles'):
+    types = qm9_types if dataset == 'qm9' else drugs_types
+    use_diffusion_angle_def = False
+    data = ConformerDataset(data_dir, split_path, mode, dataset=dataset,
+                                   types=types, transform=None,
+                                   num_workers=num_workers,
+                                   limit_molecules=limit_mols, #args.limit_train_mols,
+                                   cache_path=None, #args.cache,
+                                   name=f'{dataset}_{mode}_{limit_mols}_final_fast',
                                    pickle_dir=std_pickles,
                                    use_diffusion_angle_def=use_diffusion_angle_def,
                                    raw_dir='/home/dreidenbach/data/torsional_diffusion/QM9/dgl', 

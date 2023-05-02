@@ -176,7 +176,7 @@ def mol2graph(mol, name = "test", radius=4, max_neighbors=None, use_rdkit_coords
         lig_coords = align(torch.from_numpy(rdkit_coords), torch.from_numpy(true_lig_coords)).numpy()
         # print('LOSS kabsch RMSD between rdkit ligand and true ligand is ', np.sqrt(np.sum((lig_coords - true_lig_coords) ** 2, axis=1).mean()).item())
         loss = torch.nn.MSELoss()
-        #print('LOSS kabsch MSE between rdkit ligand and true ligand is ', loss(torch.from_numpy(true_lig_coords), torch.from_numpy(lig_coords)).cpu().detach().numpy().item())
+        # print('LOSS kabsch MSE between rdkit ligand and true ligand is ', loss(torch.from_numpy(true_lig_coords), torch.from_numpy(lig_coords)).cpu().detach().numpy().item())
     else:
         lig_coords = true_lig_coords
     num_nodes = lig_coords.shape[0]
@@ -475,7 +475,7 @@ def get_coords(rd_mol):
         Z.append([*position])
     return np.asarray(Z)
 
-def get_rdkit_coords(mol, seed = None):
+def get_rdkit_coords(mol, seed = None, use_mmff = True):
     id = AllChem.EmbedMultipleConfs(mol, numConfs=1)#, randomSeed=10)
     try:
         id = list(id)
@@ -491,7 +491,7 @@ def get_rdkit_coords(mol, seed = None):
         except:
             print("RDKit cannot generate conformer for: ", Chem.MolToSmiles(mol))
             return None
-    else:
+    elif use_mmff:
         AllChem.MMFFOptimizeMoleculeConfs(mol, mmffVariant='MMFF94s')
     conf = mol.GetConformer()
     lig_coords = conf.GetPositions()
