@@ -324,7 +324,10 @@ class ConformerDataset(DGLDataset):
                 self.datapoints = pickle.load(f)
         else:
             print("Preprocessing")
-            self.datapoints = self.preprocess_datapoints(self.root, self.split_path, self.pickle_dir, self.mode, self.num_workers, self.limit_molecules)
+            if self.dataset == 'qm9':
+                 self.datapoints = self.preprocess_datapoints(self.root, self.split_path, self.pickle_dir, self.mode, self.num_workers, self.limit_molecules)
+            else:
+                self.datapoints = self.preprocess_datapoints_chunk(self.root, self.split_path, self.pickle_dir, self.mode, self.num_workers, self.limit_molecules)
             if self.cache_path:
                 print("Caching at", self.cache_path)
                 with open(self.cache_path, "wb") as f:
@@ -333,6 +336,47 @@ class ConformerDataset(DGLDataset):
         #if self.limit_molecules:
             #self.datapoints = self.datapoints[:self.limit_molecules]
             
+    def preprocess_datapoints_chunk(self, root, split_path, pickle_dir, mode, num_workers, limit_molecules):
+        mols_per_pickle = 1000
+        split_idx = 0 if mode == 'train' else 1 if mode == 'val' else 2
+        split = sorted(np.load(split_path, allow_pickle=True)[split_idx])
+        if limit_molecules:
+            split = split[:limit_molecules]
+        smiles = np.array(sorted(glob.glob(osp.join(self.root, '*.pickle'))))
+        smiles = smiles[split]
+
+        self.open_pickles = {}
+        smiles = [smi[len(root):-7] for smi in smiles]
+
+        print('Preparing to process', len(smiles), 'smiles')
+        chunk_size = len(smiles)//10
+        all_smiles = smiles
+        smiles = []
+        old_name = self.name
+        total_count = 0
+        for i in range(5):
+            smiles = all_smiles[i*chunk_size : (i+1)*chunk_size]
+            datapoints = []
+            if num_workers > 1:
+                results = []
+                with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+                    with tqdm(total=len(smiles)) as pbar:
+                        futures = [executor.submit(self.filter_smiles_mp, entry) for entry in smiles]
+                        for future in concurrent.futures.as_completed(futures):
+                            pbar.update(1)
+                    molecules = [future.result() for future in concurrent.futures.as_completed(futures)]
+                    datapoints = [item for sublist in molecules for item in sublist if sublist is not None and sublist[0] is not None]
+                    
+            print('Fetched', len(datapoints), 'mols successfully')
+            total_count += len(datapoints)
+            print('Fetched Total', total_count, 'mols successfully')
+            print(self.failures)
+            if pickle_dir: del self.current_pickle
+            self.datapoints = datapoints
+            self.name = old_name + f"_{i}"
+            self.save()
+        return datapoints
+    
     def preprocess_datapoints(self, root, split_path, pickle_dir, mode, num_workers, limit_molecules):
         mols_per_pickle = 1000
         split_idx = 0 if mode == 'train' else 1 if mode == 'val' else 2
@@ -818,3 +862,4 @@ def cook_drugs_local_fast(batch_size = 32, mode = 'train', data_dir='/home/dreid
     dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=num_workers,
                                             collate_fn = collate)
     return dataloader, data
+        

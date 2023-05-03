@@ -20,8 +20,8 @@ def load_data(cfg):
     #mp.set_start_method('spawn') # use 'spawn' method instead of 'fork'
     #mp.set_sharing_strategy('file_system') 
     print("Loading DRUGs...")
-    train_loader, train_data = cook_drugs_local_fast(batch_size=cfg['train_batch_size'], mode='train') #cook_drugs_local
-    val_loader, val_data = cook_drugs_local(batch_size=cfg['val_batch_size'], mode='val')
+    train_loader, train_data = cook_drugs(batch_size=cfg['train_batch_size'], mode='train', num_workers= 16) #cook_drugs_local
+    val_loader, val_data = cook_drugs(batch_size=cfg['val_batch_size'], mode='val', num_workers = 16)
     print("Loading DRUGS --> Done")
     return train_loader, train_data, val_loader, val_data
 
@@ -33,30 +33,30 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     coordinate_type = cfg.coordinates
     NAME = cfg.wandb['name'] + suffix
     train_loader, train_data, val_loader, val_data = load_data(cfg.data)
-    F = cfg.encoder["coord_F_dim"]
-    D = cfg.encoder["latent_dim"]
-    model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, coordinate_type, device = "cuda").cuda()
+#     F = cfg.encoder["coord_F_dim"]
+#     D = cfg.encoder["latent_dim"]
+#     model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, coordinate_type, device = "cuda").cuda()
     
-    print("CUDA CHECK", next(model.parameters()).is_cuda)
-    print("# of Encoder Params = ", sum(p.numel()
-          for p in model.encoder.parameters() if p.requires_grad))
-    print("# of Decoder Params = ", sum(p.numel()
-          for p in model.decoder.parameters() if p.requires_grad))
-    print("# of VAE Params = ", sum(p.numel()
-          for p in model.parameters() if p.requires_grad))
+#     print("CUDA CHECK", next(model.parameters()).is_cuda)
+#     print("# of Encoder Params = ", sum(p.numel()
+#           for p in model.encoder.parameters() if p.requires_grad))
+#     print("# of Decoder Params = ", sum(p.numel()
+#           for p in model.decoder.parameters() if p.requires_grad))
+#     print("# of VAE Params = ", sum(p.numel()
+#           for p in model.parameters() if p.requires_grad))
     
     
+# #     runner = BenchmarkRunner(batch_size = cfg.data['train_batch_size'], 
+# #                              true_mols = '/home/dannyreidenbach/data/DRUGS/test_mols.pkl', 
+# #                              valid_mols = '/home/dannyreidenbach/data/DRUGS/test_smiles.csv', 
+# #                              dataset = 'drugs',
+# #                              save_dir = '/home/dannyreidenbach/data/DRUGS/test_set')
 #     runner = BenchmarkRunner(batch_size = cfg.data['train_batch_size'], 
-#                              true_mols = '/home/dannyreidenbach/data/DRUGS/test_mols.pkl', 
-#                              valid_mols = '/home/dannyreidenbach/data/DRUGS/test_smiles.csv', 
-#                              dataset = 'drugs',
-#                              save_dir = '/home/dannyreidenbach/data/DRUGS/test_set')
-    runner = BenchmarkRunner(batch_size = cfg.data['train_batch_size'], 
-                             true_mols = '/home/dreidenbach/data/torsional_diffusion/DRUGS/test_mols.pkl', 
-                             valid_mols = '/home/dreidenbach/data/torsional_diffusion/DRUGS/test_smiles.csv', 
-                             dataset = 'drugs', 
-                             save_dir = '/home/dreidenbach/data/torsional_diffusion/DRUGS/test_set')
-    runner.generate(model, rdkit_only = True)
+#                              true_mols = '/home/dreidenbach/data/torsional_diffusion/DRUGS/test_mols.pkl', 
+#                              valid_mols = '/home/dreidenbach/data/torsional_diffusion/DRUGS/test_smiles.csv', 
+#                              dataset = 'drugs', 
+#                              save_dir = '/home/dreidenbach/data/torsional_diffusion/DRUGS/test_set')
+#     runner.generate(model, rdkit_only = True)
 
     print("Cook Comlete")
 
