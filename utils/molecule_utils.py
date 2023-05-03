@@ -489,7 +489,7 @@ def get_rdkit_coords(mol, seed = None, use_mmff = True):
         try:
             AllChem.MMFFOptimizeMoleculeConfs(mol, mmffVariant='MMFF94s')
         except:
-            print("RDKit cannot generate conformer for: ", Chem.MolToSmiles(mol))
+            print("get_rdkit_coords: RDKit cannot generate conformer for: ", Chem.MolToSmiles(mol))
             return None
     elif use_mmff:
         AllChem.MMFFOptimizeMoleculeConfs(mol, mmffVariant='MMFF94s')

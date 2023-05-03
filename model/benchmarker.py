@@ -93,17 +93,24 @@ class BenchmarkRunner():
         self.dataset = dataset
         self.n_workers = 1
         self.D, self.F = D, F
-        self.name = f'{dataset}_full'#_no_mmff_2'
+        self.name = f'{dataset}_full'#_full_V3_check
         self.batch_size = batch_size
         self.only_alignmol = False
         self.save_dir = save_dir
         self.types = qm9_types if dataset == 'qm9' else drugs_types
         self.use_diffusion_angle_def = False
+        if False and self.dataset == 'qm9':
+            with open('/home/dreidenbach/code/mcg/coagulation/scripts/qm9_both_fails.txt', 'r') as f:
+                lines = f.readlines()
+                self.check = set([line.strip() for line in lines])
+            self.use_check = True
+        else:
+            self.use_check = False
         if self.has_cache():
             self.clean_true_mols()
             self.smiles, data = self.load()
         else:
-            self.build_test_dataset()
+            self.build_test_dataset_V2()
             self.save() 
             self.smiles = [x[0] for x in self.datapoints]
             data = [x[1] for x in self.datapoints]
@@ -121,160 +128,123 @@ class BenchmarkRunner():
                 raw_smi = smi
             # self.true_mols[raw_smi] = true_confs = self.clean_confs(smi, self.true_mols[raw_smi])
             self.true_mols[smi] = true_confs = self.clean_confs(smi, self.true_mols[raw_smi])
-            
-    def build_test_dataset(self, confs_per_mol = None):
+    
+    def build_test_dataset_V2(self, confs_per_mol = None):
         self.model_preds = defaultdict(list)
         self.problem_smiles = set()
-        # import ipdb; ipdb.set_trace()
+        dihedral_pattern = Chem.MolFromSmarts('[*]~[*]~[*]~[*]')
         print("Buidling Test Set ...")
         for smi_idx, row in tqdm(self.test_data.iterrows(), total=len(self.test_data)):
-            # if smi_idx < 950:
-                # continue
             raw_smi = row['smiles']
             n_confs = row['n_conformers']
             smi = row['corrected_smiles']
             if self.dataset == 'xl':
                 raw_smi = smi
-            # self.true_mols[raw_smi] = true_confs = self.clean_confs(smi, self.true_mols[raw_smi])
             self.true_mols[smi] = true_confs = self.clean_confs(smi, self.true_mols[raw_smi])
-            # import ipdb; ipdb.set_trace()
+            if self.use_check and smi in self.check:
+                print(smi, " in precalc'd errors of me and torsional diffusion")
+                continue
             if len(true_confs) == 0:
                 print(f'poor ground truth conformers: {smi}')
                 self.model_preds[smi] = [None]
                 self.problem_smiles.add(smi)
                 continue
-            # if confs_per_mol:
-            #     duplicate = confs_per_mol
-            # else:
-            #     duplicate = 2*len(true_confs) #n_confs
-            # moles = [self.true_mols[raw_smi]] * duplicate
-            # moles = []
-            # for mol in true_confs:
-            #     moles.extend([mol, mol])
-            # datas = self.featurize_mol(smi, moles)
             datas = self.featurize_mol(smi, true_confs)
-            # datas = []
-            # for d in datas_:
-            #     datas.extend([d, copy.deepcopy(d)])
-            # import ipdb; ipdb.set_trace()
             bad_idx_A = []
             results_A = []
+            # print("\n\n\n Generating:", smi)
             for idx, data in enumerate(datas):
                 mol = true_confs[idx]
                 edge_mask, mask_rotate = get_transformation_mask(mol, data)
-                if np.sum(edge_mask) < 0.5:
+                if not mol.HasSubstructMatch(dihedral_pattern):# or np.sum(edge_mask) < 0.5: # if no rotatable bonds
                     bad_idx_A.append(idx)
                     results_A.append(None)
-                    self.problem_smiles.add(smi)
+                    print("No rotatable bonds", idx, len(true_confs), smi)
                     continue
                 try:
                     A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
-                # try:
-                    A_cg = conditional_coarsen_3d(data, A_frag_ids, A_cg_map, A_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
-                except:
-                    print("Coarsen Issue AddHs Data Issue: ground truth molecule does not have full Hs", idx, smi)
+                except Exception as e:
+                    print(e)
+                    print("Coarsen Issue", idx, smi)
                     bad_idx_A.append(idx)
                     results_A.append(None)
-                    self.problem_smiles.add(smi)
+                try:
+                    A_cg = conditional_coarsen_3d(data, A_frag_ids, A_cg_map, A_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
+                except Exception as e:
+                    print(e)
+                    print("CG Graph Creation Error", idx, smi)
+                    bad_idx_A.append(idx)
+                    results_A.append(None)
                     continue
-                    # import ipdb; ipdb.set_trace()
-                    # A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
-                    # A_cg = conditional_coarsen_3d(data, A_frag_ids, A_cg_map, A_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
                 geometry_graph_A = get_geometry_graph(mol)
-                # err = check_distances(data, geometry_graph_A)
-                # if err.item() > 1e-3:
-                #     import ipdb; ipdb.set_trace()
-                #     data = self.featurize_mol(mol_dic)
                 Ap = create_pooling_graph(data, A_frag_ids)
                 geometry_graph_A_cg = get_coarse_geometry_graph(A_cg, A_cg_map)
                 results_A.append((data, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids))
-            # import ipdb; ipdb.set_trace()
             if len(results_A) == len(bad_idx_A):
-                self.model_preds[smi] = [None]
-                self.problem_smiles.add(smi)
                 continue
-            data_Bs = self.featurize_mol(smi, true_confs, use_rdkit_coords = True)
-            # data_Bs2 = self.featurize_mol(smi, copy.deepcopy(true_confs), use_rdkit_coords = True)
-            # for aa ,bb in zip(data_Bs, data_Bs2):
-            #     if aa is not None and bb is not None:
-            #         import ipdb; ipdb.set_trace()
-            #         c = 1
             # import ipdb; ipdb.set_trace()
+            B_confs = copy.deepcopy(true_confs) + copy.deepcopy(true_confs)
+            B_confs = [Chem.AddHs(x) for x in B_confs]
+            try:
+                assert(sum([x.ndata['x'].shape[0] for x in datas]) == sum([x.GetNumAtoms() for x in B_confs])/2)
+            except:
+                ca = sum([x.ndata['x'].shape[0] for x in datas])
+                cb = sum([x.GetNumAtoms() for x in B_confs])
+                import ipdb; ipdb.set_trace()
+                
+            data_Bs = self.featurize_mol(smi, B_confs, use_rdkit_coords = True)
             bad_idx_B = []
             results_B = []
-            # data_Bs = []
-            # for d in datas_:
-            #     data_Bs.extend([d, copy.deepcopy(d)])
             for idx, data_B in enumerate(data_Bs):
                 if idx in set(bad_idx_A):
                     bad_idx_B.append(idx)
                     results_B.append(None)
                     continue
                 if not data_B:
-                    print('Cannot RDKit Featurize', idx, smi)
+                    print('B Graph Cannot RDKit Featurize', idx, len(B_confs), smi)
                     bad_idx_B.append(idx)
                     results_B.append(None)
-                    # self.problem_smiles.add(smi)
                     continue
-                    # return False
-                mol = true_confs[idx]
+                mol = B_confs[idx] #true_confs[idx]
                 B_frags, B_frag_ids, B_adj, B_out, B_bond_break, B_cg_bonds, B_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
                 B_cg = conditional_coarsen_3d(data_B, B_frag_ids, B_cg_map, B_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
-    #             geometry_graph_B = copy.deepcopy(geometry_graph_A) #get_geometry_graph(mol)
                 geometry_graph_B = get_geometry_graph(mol)
                 Bp = create_pooling_graph(data_B, B_frag_ids)
                 geometry_graph_B_cg = get_coarse_geometry_graph(B_cg, B_cg_map)
                 err = check_distances(data_B, geometry_graph_B, True)
                 assert( err < 1e-3 )
-                # if err.item() > 1e-3:
-                #     import ipdb; ipdb.set_trace()
-                #     data_B = self.featurize_mol(mol_dic, use_rdkit_coords = True)
                 results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids))
-            
-            bad_idx_B2 = []
-            results_B2 = []
-            # data_B2s = self.featurize_mol(smi, true_confs, use_rdkit_coords = True)
-            for idx, data_B in enumerate(data_Bs):
-                if idx in set(bad_idx_A) or idx in set(bad_idx_B):
-                    bad_idx_B2.append(idx)
-                    results_B2.append(None)
-                    continue
-                if not data_B:
-                    print("Bad B2 Not found in first pass: TAKE A LOOK")
-                    bad_idx_B2.append(idx)
-                    results_B2.append(None)
-                    continue
-                mol = true_confs[idx]
-                B_frags, B_frag_ids, B_adj, B_out, B_bond_break, B_cg_bonds, B_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
-                B_cg = conditional_coarsen_3d(data_B, B_frag_ids, B_cg_map, B_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
-                geometry_graph_B = get_geometry_graph(mol)
-                Bp = create_pooling_graph(data_B, B_frag_ids)
-                geometry_graph_B_cg = get_coarse_geometry_graph(B_cg, B_cg_map)
-                results_B2.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids))
                 
             try:
-                assert(len(results_A) == len(results_B))
+                assert(2*len(results_A) == len(results_B))
             except:
-                import ipdb; ipdb.set_trace()
-            
-            try:
-                assert(set(bad_idx_B) == set(bad_idx_B2))
-            except:
+                print("mismatch A and B")
                 import ipdb; ipdb.set_trace()
                 
             bad_idx = set(bad_idx_A) | set(bad_idx_B)
             # import ipdb; ipdb.set_trace()
             results_A = [x for idx, x in enumerate(results_A) if idx not in bad_idx]
             results_B = [x for idx, x in enumerate(results_B) if idx not in bad_idx]
-            results_B2 = [x for idx, x in enumerate(results_B2) if idx not in bad_idx]
-            assert(len(results_A) == len(results_B))
-            if len(results_A) == 0 or len(results_B) == 0:
-                self.model_preds[smi] = [None]
+            
+            point_clouds_array = np.array([x[0].ndata['x_ref'].numpy() for x in results_B])
+            unique_point_clouds_array = np.unique(point_clouds_array, axis=0)
+            num_unique_point_clouds = unique_point_clouds_array.shape[0]
+            # print("Unique RDKit", num_unique_point_clouds)
+            if num_unique_point_clouds != len(results_B):
+                import ipdb; ipdb.set_trace()
 
             count = 0
-            for a,b in zip(results_A, results_B):
+            first = results_B[:len(results_A)]
+            second = results_B[len(results_A):]
+            # print(len(results_A), len(results_B))
+            for a,b in zip(results_A, first):
+                assert(a is not None and b is not None)
                 self.model_preds[smi].append((a,b))
-                self.model_preds[smi].append((copy.deepcopy(a), results_B2[count]))
+                if count >= len(second):
+                    c = copy.deepcopy(first[0])
+                else:
+                    c = second[count]
+                self.model_preds[smi].append((copy.deepcopy(a), c))
                 count += 1
                 
         self.datapoints = []
@@ -284,6 +254,180 @@ class BenchmarkRunner():
             self.datapoints.extend([(k, vv) for vv in v])
         print('Fetched', len(self.datapoints), 'mols successfully')
         # print('Example', self.datapoints[0])
+         
+    # def build_test_dataset(self, confs_per_mol = None):
+    #     self.model_preds = defaultdict(list)
+    #     self.problem_smiles = set()
+    #     dihedral_pattern = Chem.MolFromSmarts('[*]~[*]~[*]~[*]')
+    #     # import ipdb; ipdb.set_trace()
+    #     print("Buidling Test Set ...")
+    #     for smi_idx, row in tqdm(self.test_data.iterrows(), total=len(self.test_data)):
+    #         # if smi_idx < 950:
+    #             # continue
+    #         raw_smi = row['smiles']
+    #         n_confs = row['n_conformers']
+    #         smi = row['corrected_smiles']
+    #         if self.dataset == 'xl':
+    #             raw_smi = smi
+    #         # self.true_mols[raw_smi] = true_confs = self.clean_confs(smi, self.true_mols[raw_smi])
+    #         self.true_mols[smi] = true_confs = self.clean_confs(smi, self.true_mols[raw_smi])
+    #         # import ipdb; ipdb.set_trace()
+    #         if len(true_confs) == 0:
+    #             print(f'poor ground truth conformers: {smi}')
+    #             self.model_preds[smi] = [None]
+    #             self.problem_smiles.add(smi)
+    #             continue
+    #         # if confs_per_mol:
+    #         #     duplicate = confs_per_mol
+    #         # else:
+    #         #     duplicate = 2*len(true_confs) #n_confs
+    #         # moles = [self.true_mols[raw_smi]] * duplicate
+    #         # moles = []
+    #         # for mol in true_confs:
+    #         #     moles.extend([mol, mol])
+    #         # datas = self.featurize_mol(smi, moles)
+    #         datas = self.featurize_mol(smi, true_confs)
+    #         # datas = []
+    #         # for d in datas_:
+    #         #     datas.extend([d, copy.deepcopy(d)])
+    #         # import ipdb; ipdb.set_trace()
+    #         bad_idx_A = []
+    #         results_A = []
+    #         print("\n\n\n Generating:", smi)
+    #         for idx, data in enumerate(datas):
+    #             mol = true_confs[idx]
+    #             edge_mask, mask_rotate = get_transformation_mask(mol, data)
+    #             if not mol.HasSubstructMatch(dihedral_pattern) or np.sum(edge_mask) < 0.5: # if no rotatable bonds
+    #             # if np.sum(edge_mask) < 0.5: 
+    #                 bad_idx_A.append(idx)
+    #                 results_A.append(None)
+    #                 # self.problem_smiles.add(smi)
+    #                 # ok_check = mol.HasSubstructMatch(dihedral_pattern)
+    #                 # if ok_check:
+    #                 #     print(idx, smi, "should not skip")
+    #                 print("No rotatable bonds", idx, smi)
+    #                 continue
+    #             try:
+    #                 A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
+    #             except Exception as e:
+    #                 print(e)
+    #                 print("Coarsen Issue", idx, smi)
+    #                 bad_idx_A.append(idx)
+    #                 results_A.append(None)
+    #             try:
+    #                 A_cg = conditional_coarsen_3d(data, A_frag_ids, A_cg_map, A_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
+    #             except Exception as e:
+    #                 print(e)
+    #                 print("CG Graph Creation Error", idx, smi)
+    #                 bad_idx_A.append(idx)
+    #                 results_A.append(None)
+    #                 # self.problem_smiles.add(smi)
+    #                 continue
+    #                 # import ipdb; ipdb.set_trace()
+    #                 # A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
+    #                 # A_cg = conditional_coarsen_3d(data, A_frag_ids, A_cg_map, A_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
+    #             geometry_graph_A = get_geometry_graph(mol)
+    #             # err = check_distances(data, geometry_graph_A)
+    #             # if err.item() > 1e-3:
+    #             #     import ipdb; ipdb.set_trace()
+    #             #     data = self.featurize_mol(mol_dic)
+    #             Ap = create_pooling_graph(data, A_frag_ids)
+    #             geometry_graph_A_cg = get_coarse_geometry_graph(A_cg, A_cg_map)
+    #             results_A.append((data, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids))
+    #         # import ipdb; ipdb.set_trace()
+    #         if len(results_A) == len(bad_idx_A):
+    #             # self.model_preds[smi] = [None]
+    #             # self.problem_smiles.add(smi)
+    #             continue
+    #         # TODO: featurize with 2* true confs then filter for 2x then split into two final results
+    #         # TODO if not generated 2x try again
+    #         B_confs = copy.deepcopy(true_confs)
+    #         data_Bs = self.featurize_mol(smi, B_confs, use_rdkit_coords = True)
+    #         bad_idx_B = []
+    #         results_B = []
+    #         for idx, data_B in enumerate(data_Bs):
+    #             if idx in set(bad_idx_A):
+    #                 bad_idx_B.append(idx)
+    #                 results_B.append(None)
+    #                 continue
+    #             if not data_B:
+    #                 print('B Graph Cannot RDKit Featurize', idx, smi)
+    #                 bad_idx_B.append(idx)
+    #                 results_B.append(None)
+    #                 # self.problem_smiles.add(smi)
+    #                 continue
+    #                 # return False
+    #             mol = B_confs[idx] #true_confs[idx]
+    #             B_frags, B_frag_ids, B_adj, B_out, B_bond_break, B_cg_bonds, B_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
+    #             B_cg = conditional_coarsen_3d(data_B, B_frag_ids, B_cg_map, B_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
+    # #             geometry_graph_B = copy.deepcopy(geometry_graph_A) #get_geometry_graph(mol)
+    #             geometry_graph_B = get_geometry_graph(mol)
+    #             Bp = create_pooling_graph(data_B, B_frag_ids)
+    #             geometry_graph_B_cg = get_coarse_geometry_graph(B_cg, B_cg_map)
+    #             err = check_distances(data_B, geometry_graph_B, True)
+    #             assert( err < 1e-3 )
+    #             # if err.item() > 1e-3:
+    #             #     import ipdb; ipdb.set_trace()
+    #             #     data_B = self.featurize_mol(mol_dic, use_rdkit_coords = True)
+    #             results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids))
+            
+    #         # bad_idx_B2 = []
+    #         # results_B2 = []
+    #         # B2_confs = copy.deepcopy(true_confs)
+    #         # data_Bs2 = self.featurize_mol(smi, B2_confs, use_rdkit_coords = True)
+    #         # for idx, data_B in enumerate(data_Bs2):
+    #         #     if idx in set(bad_idx_A):
+    #         #         results_B2.append(None)
+    #         #         continue
+    #         #     if idx in set(bad_idx_B):
+    #         #         bad_idx_B2.append(idx)
+    #         #         results_B2.append(None)
+    #         #         continue
+    #         #     if not data_B:
+    #         #         print('B Graph2 Cannot RDKit Featurize [CHECK]', idx, smi)
+    #         #         bad_idx_B2.append(idx)
+    #         #         results_B2.append(None)
+    #         #         continue
+    #         #     mol = B2_confs[idx]
+    #         #     B_frags, B_frag_ids, B_adj, B_out, B_bond_break, B_cg_bonds, B_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = self.use_diffusion_angle_def)
+    #         #     B_cg = conditional_coarsen_3d(data_B, B_frag_ids, B_cg_map, B_bond_break, radius=4, max_neighbors=None, latent_dim_D = self.D, latent_dim_F = self.F)
+    #         #     geometry_graph_B = get_geometry_graph(mol)
+    #         #     Bp = create_pooling_graph(data_B, B_frag_ids)
+    #         #     geometry_graph_B_cg = get_coarse_geometry_graph(B_cg, B_cg_map)
+    #         #     results_B2.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids))
+                
+    #         try:
+    #             assert(len(results_A) == len(results_B))
+    #         except:
+    #             import ipdb; ipdb.set_trace()
+            
+    #         # try:
+    #         #     assert(set(bad_idx_B) == set(bad_idx_B2))
+    #         # except:
+    #         #     import ipdb; ipdb.set_trace()
+                
+    #         bad_idx = set(bad_idx_A) | set(bad_idx_B)
+    #         # import ipdb; ipdb.set_trace()
+    #         results_A = [x for idx, x in enumerate(results_A) if idx not in bad_idx]
+    #         results_B = [x for idx, x in enumerate(results_B) if idx not in bad_idx]
+    #         # results_B2 = [x for idx, x in enumerate(results_B2) if idx not in bad_idx]
+    #         assert(len(results_A) == len(results_B))
+    #         # if len(results_A) == 0 or len(results_B) == 0:
+    #         #     self.model_preds[smi] = [None]
+
+    #         count = 0
+    #         for a,b in zip(results_A, results_B):
+    #             self.model_preds[smi].append((a,b))
+    #             self.model_preds[smi].append((copy.deepcopy(a), copy.deepcopy(b)))
+    #             count += 1
+                
+    #     self.datapoints = []
+    #     for k, v in self.model_preds.items():
+    #         if v[0] == None:
+    #             continue
+    #         self.datapoints.extend([(k, vv) for vv in v])
+    #     print('Fetched', len(self.datapoints), 'mols successfully')
+    #     # print('Example', self.datapoints[0])
         
     def featurize_mol(self, smi, moles, use_rdkit_coords = False):
         name = smi
@@ -303,17 +447,16 @@ class BenchmarkRunner():
             # pos.append(torch.tensor(mol.GetConformer().GetPositions(), dtype=torch.float))
             correct_mol = mol
             check_ = correct_mol.GetConformer().GetPositions()
-            # mol_features = featurize_mol(correct_mol, self.types, use_rdkit_coords = use_rdkit_coords)
-            #! Use MMFF makes things worse????
-            mol_features = featurize_mol(correct_mol, self.types, use_rdkit_coords = use_rdkit_coords, use_mmff = False)
+            mol_features = featurize_mol(correct_mol, self.types, use_rdkit_coords = use_rdkit_coords)
+            # mol_features = featurize_mol(correct_mol, self.types, use_rdkit_coords = use_rdkit_coords, use_mmff = False)
             if mol_features is not None:
                 try:
                     cmpt = correct_mol.GetConformer().GetPositions()
                     if use_rdkit_coords:
-                        a = mol_features.ndata['x_true'].numpy() #cmpt-np.mean(cmpt, axis = 0)
-                        b = mol_features.ndata['x_ref'].numpy()
-                        if np.mean((a - b) ** 2) < 1e-5:
-                            import ipdb; ipdb.set_trace()
+                        # a = mol_features.ndata['x_true'].numpy() #cmpt-np.mean(cmpt, axis = 0)
+                        # b = mol_features.ndata['x_ref'].numpy()
+                        # if np.mean((a - b) ** 2) < 1e-5:
+                        #     import ipdb; ipdb.set_trace()
                         # assert(np.mean((a - b) ** 2) < 1e-7 ) # This fails since the featurization aligns the rdkit so the MSE is not preserved
                         cmpt = check_
                     a = cmpt-np.mean(cmpt, axis = 0)
@@ -324,9 +467,9 @@ class BenchmarkRunner():
                     mol_features = featurize_mol(correct_mol, self.types, use_rdkit_coords = use_rdkit_coords)
                 
             datas.append(mol_features)
-            if mol_features is None:
-                print(f"Skipping {len(moles)-1} since I am {use_rdkit_coords} using RDKit and I am getting a Featurization error")
-                early_kill = True
+            # if mol_features is None:
+            #     print(f"Skipping {len(moles)-1} since I am {use_rdkit_coords} using RDKit and I am getting a Featurization error")
+            #     early_kill = True
         # if use_rdkit_coords:
         #     import ipdb; ipdb.set_trace()
         return datas
@@ -378,8 +521,10 @@ class BenchmarkRunner():
             self.rdkit_molecules_distances = distances
             self.final_confs_rdkit = defaultdict(list)
             for smi, data in zip(self.smiles, molecules):
+                # if self.flag_molecule(smi, data):
+                #     continue
                 self.final_confs_rdkit[smi].append(dgl_to_mol(copy.deepcopy(self.true_mols[smi][0]), data, mmff=False, rmsd=False, copy=True, key = 'x_ref'))
-            self.results_rdkit = self.calculate(self.final_confs_rdkit)
+            self.results_rdkit = self.calculate(self.final_confs_rdkit, use_wandb= use_wandb)
                 
             
         
@@ -399,21 +544,22 @@ class BenchmarkRunner():
             corrected_smi = row['corrected_smiles']
             if self.dataset == 'xl':
                 smi = corrected_smi
+            
+            true_confs = self.true_mols[corrected_smi]
+            if len(true_confs) == 0:
+                print(f'poor ground truth conformers: {corrected_smi}')
+                continue
+            
             if corrected_smi not in final_confs:
                 if corrected_smi not in self.problem_smiles:
                     self.num_failures += 1
-                    print('model failure error in RDKit or elsewhere', corrected_smi)
+                    print('Cannot feed into Model', corrected_smi)
                 else:
-                    print('problematic ground truth', corrected_smi)
+                    print('problematic ground truth not caught early on [CHECK]', corrected_smi)
                 continue
 
             # true_mols[smi] = true_confs = self.clean_confs(corrected_smi, true_mols[smi])
             # true_confs = self.true_mols[smi]
-            true_confs = self.true_mols[corrected_smi]
-
-            if len(true_confs) == 0:
-                print(f'poor ground truth conformers: {corrected_smi}')
-                continue
 
             n_true = len(true_confs)
             n_model = len(final_confs[corrected_smi])

@@ -99,6 +99,8 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
           for p in model.parameters() if p.requires_grad))
     if cfg.optimizer.optim == 'adamw':
         optim = torch.optim.AdamW(model.parameters(), lr= cfg.optimizer.lr)
+    elif cfg.optimizer.optim == 'adam':
+        optim = torch.optim.Adam(model.parameters(), lr= cfg.optimizer.lr)
     else:
         assert(1 == 0)
     # self.optim.step()
@@ -108,9 +110,13 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     # self.optim.zero_grad()
     # self.optim_steps += 1
     # torch.autograd.set_detect_anomaly(True)
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optim, mode='min', factor=0.1, patience=1, verbose=True)
+    scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=1, gamma=0.5)
+
+
     
     kl_annealing = True
-    kl_weight = 1e-6
+    kl_weight = 1e-5
     kl_annealing_rate = 1e-3
     kl_annealing_interval = 1
     kl_cap = 1e-1
@@ -132,13 +138,8 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
         train_loss_log, val_loss_log = [], []
         count = 0
         for A_batch, B_batch in train_loader:
-            # print("Memory", torch.cuda.memory_allocated())
-            # print_gpu_usage()
             A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
             B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids = B_batch
-            # for segment in frag_ids:
-            #     if -1 in segment:
-            #         ipdb.set_trace()
             A_graph, geo_A, Ap, A_cg, geo_A_cg = A_graph.to('cuda:0'), geo_A.to(
                 'cuda:0'), Ap.to('cuda:0'), A_cg.to('cuda:0'), geo_A_cg.to('cuda:0')
             B_graph, geo_B, Bp, B_cg, geo_B_cg = B_graph.to('cuda:0'), geo_B.to(
@@ -182,6 +183,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
             count+=1
 
         print("Validation")
+        val_loss = 0
         with torch.no_grad():
             for A_batch, B_batch in val_loader:
                 A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
@@ -196,11 +198,15 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
                 loss, losses = model.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, AR_loss, step=epoch, log_latent_stats = False)
                 # train_loss_log.append(losses)
                 losses['Val Loss'] = loss.cpu()
+                val_loss += losses['Val Loss']
                 wandb.log({'val_' + key: value for key, value in losses.items()})
                 print(f"Val LOSS = {loss}")
             
             print("Test Benchmarks")
             BENCHMARK.generate(model)
+            
+        # scheduler.step(val_loss)
+        scheduler.step()
         model_path = f'/home/dannyreidenbach/mcg/coagulation/scripts/model_ckpt/{NAME}_{epoch}.pt'
         torch.save(model.state_dict(), model_path)
         

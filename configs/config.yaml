@@ -7,7 +7,7 @@ defaults:
   - losses: base
   - data: base
 
-coordinates: double #absolute # or delta or double
+coordinates: delta #absolute # or delta or double
 
 hydra:
   job:
@@ -33,5 +33,5 @@ hydra:
 
 wandb:
   project: MCG
-  name: double_delta_test
+  name: ar_delta_test
   notes: testing data + local benchmarking

@@ -472,7 +472,7 @@ class ConformerDataset(DGLDataset):
                 continue
             mol = mol_dic['conformers'][idx]['rd_mol']
             edge_mask, mask_rotate = get_transformation_mask(mol, data)
-            if np.sum(edge_mask) < 0.5:
+            if np.sum(edge_mask) < 0.5: #TODO: Do we need this since we are using GEOMOL
                 self.failures['no_rotable_bonds'] += 1
                 bad_idx_A.append(idx)
                 results_A.append(None)

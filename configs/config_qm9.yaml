@@ -33,5 +33,5 @@ hydra:
 
 wandb:
   project: MCG
-  name: QM9_med_vae_kl_dist_anneal
-  notes: trying out kl annealing on medium model with distance annealing
+  name: QM9_med_vae_kl_dist_anneal_mixing
+  notes: adding additional feature mixing into decoder layer

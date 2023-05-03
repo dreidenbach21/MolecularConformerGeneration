@@ -58,7 +58,8 @@ class VAE(nn.Module):
         if not validation:
             kl_v, kl_v_un_clamped = self.kl(results["posterior_mean_V"], results["posterior_logvar_V"], results["prior_mean_V"], results["prior_logvar_V"], natoms, nbeads, coordinates = True)
             # kl_v2, kl_v_un_clamped2 = self.kl_built_in(results["posterior_mean_V"], results["posterior_logvar_V"], results["prior_mean_V"], results["prior_logvar_V"], natoms, nbeads, coordinates = True)
-            mim = self.mim(results["Z_V"], results["posterior_mean_V"], results["posterior_logvar_V"], results["prior_mean_V"], results["prior_logvar_V"], natoms, nbeads, coordinates = True)
+            # ignoring MIM for now
+            # mim = self.mim(results["Z_V"], results["posterior_mean_V"], results["posterior_logvar_V"], results["prior_mean_V"], results["prior_logvar_V"], natoms, nbeads, coordinates = True)
             dec_out = self.decoder(A_cg, B_graph, frag_ids, geometry_graph_A)
         else:
             prev_force = self.decoder.teacher_forcing

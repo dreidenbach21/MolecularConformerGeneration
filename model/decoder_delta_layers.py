@@ -186,6 +186,17 @@ class IEGMN_Bidirectional_Delta_Layer(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(self.out_feats_dim_h, 1)
             )
+        self.feature_mixing = True
+        if self.feature_mixing:
+            self.mix_features = nn.Sequential(
+                nn.Linear(invar_feats_dim_h + 3 + 3 + len(self.all_sigmas_dist), self.out_feats_dim_h),
+                # get_layer_norm(layer_norm, self.out_feats_dim_h),
+                get_non_lin(nonlin, leakyrelu_neg_slope),
+                # nn.Dropout(dropout),
+                nn.Linear(self.out_feats_dim_h, self.out_feats_dim_h),
+                # get_layer_norm(layer_norm, self.out_feats_dim_h),
+            )
+        
         self.apply(self._init_weights)
         
     def _init_weights(self, module):
@@ -344,10 +355,31 @@ class IEGMN_Bidirectional_Delta_Layer(nn.Module):
             # print("   [DEC MPNN] feat A", torch.min(node_upd_A).item(), torch.max(node_upd_A).item(), torch.norm(node_upd_A, 2).item())
             return x_evolved_A, node_upd_A, None, None, None, 0 #trajectory, geom_loss
 
+    def feature_mixer(self, h_feats_A, coords_A, coords_B, A_graph, B_graph):
+        mean_Bs = []
+        # import ipdb; ipdb.set_trace()
+        a_nodes = A_graph.batch_num_nodes().cpu().numpy()
+        start = 0
+        for b_idx, atoms in enumerate(B_graph.batch_num_nodes().cpu().numpy()):
+            for _ in range(a_nodes[b_idx]):
+                mean_Bs.append(torch.mean(coords_B[start: start + atoms], dim = 0))
+            start += atoms
+        # import ipdb; ipdb.set_trace()
+        mean_Bs = torch.stack(mean_Bs)
+        self_ref_mag = (coords_A - mean_Bs) ** 2
+        self_ref_mag = torch.sum(self_ref_mag, dim=1, keepdim=True)
+        self_ref_mag = torch.cat([torch.exp(-self_ref_mag / sigma) for sigma in self.all_sigmas_dist], dim=-1)
+        feature_input = torch.cat((h_feats_A, coords_A, mean_Bs, self_ref_mag), dim=-1)
+        h_feats_A_mixed = self.mix_features(feature_input) # (n x d + 3 + 3 + 15 --> n x d)
+        # import ipdb; ipdb.set_trace()
+        return h_feats_A_mixed
+        
     def forward(self, A_graph, B_graph, coords_A, h_feats_A, original_A_node_features, orig_coords_A,
                 coords_B, h_feats_B, original_B_node_features, orig_coords_B, mask, geometry_graph_A = None, geometry_graph_B = None, mpnn_only = False):
         if mpnn_only or B_graph is None: return self.single_forward(A_graph, coords_A, h_feats_A, original_A_node_features, orig_coords_A, geometry_graph_A, mask)
         with A_graph.local_scope() and B_graph.local_scope():
+            if self.feature_mixing:
+                h_feats_A = self.feature_mixer(h_feats_A, coords_A, coords_B, A_graph, B_graph)
             A_graph.ndata['x_now_cc'] = coords_A
             B_graph.ndata['x_now_cc'] = coords_B
             A_graph.ndata['feat_cc'] = h_feats_A  # first time set here

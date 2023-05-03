@@ -32,26 +32,31 @@ def load_data(cfg):
 
 @hydra.main(config_path="../configs", config_name="config.yaml")
 def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses', 'data', 'coordinates', 'wandb']
-    # ipdb.set_trace()
     import datetime
     now = datetime.datetime.now()
     suffix = f"_{now.strftime('%m-%d_%H-%M-%S')}"
     coordinate_type = cfg.coordinates
     NAME = cfg.wandb['name'] + suffix
+    F = cfg.encoder["coord_F_dim"]
+    D = cfg.encoder["latent_dim"]
+    
+    # train_loader, train_data, val_loader, val_data = load_data(cfg.data)
+    BENCHMARK = BenchmarkRunner(true_mols = '/home/dreidenbach/data/torsional_diffusion/QM9/test_mols.pkl',
+                                valid_mols = '/home/dreidenbach/data/torsional_diffusion/QM9/test_smiles.csv',
+                                save_dir = '/home/dreidenbach/data/torsional_diffusion/QM9/test_set',
+                                batch_size = cfg.data['train_batch_size'])
+    
+    model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, cfg.coordinates, device = "cuda").cuda()
+    BENCHMARK.generate(model, rdkit_only=True, use_wandb=False)
+    assert(1 == 0)
+    
     wandb.init(
         project=cfg.wandb.project,
         name=NAME,
         notes=cfg.wandb.notes,
         config = cfg
     )
-    train_loader, train_data, val_loader, val_data = load_data(cfg.data)
-    F = cfg.encoder["coord_F_dim"]
-    D = cfg.encoder["latent_dim"]
-    BENCHMARK = BenchmarkRunner(true_mols = '/home/dreidenbach/data/torsional_diffusion/QM9/test_mols.pkl',
-                                valid_mols = '/home/dreidenbach/data/torsional_diffusion/QM9/test_smiles.csv',
-                                save_dir = '/home/dreidenbach/data/torsional_diffusion/QM9/test_set',
-                                batch_size = cfg.data['train_batch_size'])
-    model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, cfg.coordinates, device = "cuda").cuda()
+    # BENCHMARK.generate(model, rdkit_only = True)
     
     print("CUDA CHECK", next(model.parameters()).is_cuda)
     print("# of Encoder Params = ", sum(p.numel()
@@ -75,18 +80,26 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     val_loss_log_name =  NAME + "_val"
     train_loss_log_total, val_loss_log_total = [], []
     
-    kl_annealing = False
+    kl_annealing = True
     kl_weight = 1e-6
-    kl_annealing_rate = 1e-5
+    kl_annealing_rate = 1e-3
     kl_annealing_interval = 1
-    kl_cap = 1e-3
+    kl_cap = 1e-1
+    
+    dist_weight = 1e-6
+    dist_annealing_rate = 1e-5
+    dist_cap = 0.5
     for epoch in range(cfg.data['epochs']):
         print("Epoch", epoch)
         if kl_annealing and epoch > 0 and epoch % kl_annealing_interval == 0:
             kl_weight += kl_annealing_rate
             kl_weight = min(kl_weight, kl_cap)
+            
+            dist_weight += dist_annealing_rate
+            dist_weight = min(dist_weight, dist_cap)
         if kl_annealing:
             model.kl_v_beta = kl_weight
+            model.lambda_distance = dist_weight
         train_loss_log, val_loss_log = [], []
         for A_batch, B_batch in train_loader:
             A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
@@ -150,8 +163,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
                 wandb.log({'val_' + key: value for key, value in losses.items()})
                 print(f"Val LOSS = {loss}")
                 
-            print("Test Benchmarks")
-            if epoch > 0 and epoch % 10 == 0:
+            if epoch >0 and epoch % 100 == 0:
                 BENCHMARK.generate(model)
     #   val_loss_log_total.append(val_loss_log)
     #   with open(f'./logs/{val_loss_log_name}.pkl', 'wb') as f:
