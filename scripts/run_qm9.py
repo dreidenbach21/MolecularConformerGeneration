@@ -131,7 +131,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
             kl_weight = min(kl_weight, kl_cap)
             
             dist_weight += dist_annealing_rate
-            dist_weight = min(dist_weight, cap)
+            dist_weight = min(dist_weight, dist_cap)
         if kl_annealing:
             model.kl_v_beta = kl_weight
             model.lambda_distance = dist_weight

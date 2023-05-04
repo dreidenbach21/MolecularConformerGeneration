@@ -17,7 +17,7 @@ from encoder_layers import *
 class Encoder(nn.Module):#ECN3D(nn.Module):
     def __init__(self, n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
                  use_edge_features_in_gmn, use_mean_node_features, atom_emb_dim, latent_dim,coord_F_dim,
-                 dropout, nonlin, leakyrelu_neg_slope, feature_dims = None, random_vec_dim=0, random_vec_std=1, use_scalar_features=True,
+                 dropout, nonlin, leakyrelu_neg_slope, feature_dims = 45, random_vec_dim=0, random_vec_std=1, use_scalar_features=True,
                  save_trajectories=False, weight_sharing = True, conditional_mask=False, 
                  edge_feats_dim = 15, use_bond_in_edge_feats = True, **kwargs):
         # super(ECN3D, self).__init__()
@@ -38,7 +38,8 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
                                             #  feature_dims=feature_dims, use_scalar_feat=use_scalar_features,
                                             #  n_feats_to_use=num_A_feats)
         # ! Switched from EquiBind Encoding to MLP of Torsional Diffusion
-        self.atom_embedder = AtomEncoderTorsionalDiffusion(emb_dim=atom_emb_dim - self.random_vec_dim, feature_dim = 45)
+        self.atom_embedder = AtomEncoderTorsionalDiffusion(emb_dim=atom_emb_dim - self.random_vec_dim, feature_dim = feature_dims) #qm9 45
+        # self.atom_embedder = AtomEncoderTorsionalDiffusion(emb_dim=atom_emb_dim - self.random_vec_dim, feature_dim = 75) #drugs
 
         input_node_feats_dim = atom_emb_dim #64
         if self.use_mean_node_features:
@@ -47,7 +48,7 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
         # Create First Layer
         fg_edge_feats_dim = edge_feats_dim
         if use_bond_in_edge_feats:
-            fg_edge_feats_dim += 5
+            fg_edge_feats_dim += 5 #this is what brings us to 20
         cg_edge_feats_dim = edge_feats_dim
         self.fine_grain_layers = nn.ModuleList()
         self.fine_grain_layers.append(

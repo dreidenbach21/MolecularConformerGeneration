@@ -1,6 +1,6 @@
 # my_config.yaml
 defaults:
-  - encoder: medium #medium #small
+  - encoder: medium_drugs #medium #small
   - decoder: medium #medium #small
   - vae: base
   - optimizer: base
