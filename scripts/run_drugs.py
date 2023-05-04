@@ -10,7 +10,7 @@ import torch
 import wandb
 import random
 import logging
-from utils.torsional_diffusion_data_all import load_torsional_data  # , QM9_DIMS, DRUG_DIMS
+from utils.torsional_diffusion_data_all import load_big_drugs  # , QM9_DIMS, DRUG_DIMS
 from model.vae import VAE
 import datetime
 from model.benchmarker import *
@@ -18,10 +18,10 @@ import glob
 
 
 def load_data(cfg):
-    print("Loading QM9...")
-    train_loader, train_data = load_torsional_data(batch_size=cfg['train_batch_size'], mode='train', limit_mols=cfg['train_data_limit'])
-    val_loader, val_data = load_torsional_data(batch_size=cfg['val_batch_size'], mode='val', limit_mols=cfg['val_data_limit'])
-    print("Loading QM9 --> Done")
+    print("Loading DRUGS...")
+    train_loader, train_data = load_big_drugs(batch_size=cfg['train_batch_size'], mode='train', limit_mols=cfg['train_data_limit'])
+    val_loader, val_data = load_big_drugs(batch_size=cfg['val_batch_size'], mode='val', limit_mols=cfg['val_data_limit'])
+    print("Loading DRUGS --> Done")
     return train_loader, train_data, val_loader, val_data
 
 # def save_code(wandb_run):
@@ -69,7 +69,7 @@ def get_memory_usage():
     return int(output.strip().decode()) #int(output.strip())
     
 
-@hydra.main(config_path="../configs", config_name="config_qm9.yaml")
+@hydra.main(config_path="../configs", config_name="config_drugs.yaml")
 def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses', 'data', 'coordinates', 'wandb']
     import datetime
     now = datetime.datetime.now()
@@ -85,7 +85,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     )
     save_code(wandb_run)
     train_loader, train_data, val_loader, val_data = load_data(cfg.data)
-    BENCHMARK = BenchmarkRunner(batch_size = cfg.data['train_batch_size'])
+    # BENCHMARK = BenchmarkRunner(batch_size = cfg.data['train_batch_size'])
     F = cfg.encoder["coord_F_dim"]
     D = cfg.encoder["latent_dim"]
     model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, coordinate_type, device = "cuda").cuda()
@@ -202,8 +202,8 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
                 wandb.log({'val_' + key: value for key, value in losses.items()})
                 print(f"Val LOSS = {loss}")
             
-            print("Test Benchmarks")
-            BENCHMARK.generate(model)
+            # print("Test Benchmarks")
+            # BENCHMARK.generate(model)
             
         # scheduler.step(val_loss)
         scheduler.step()

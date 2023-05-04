@@ -309,6 +309,7 @@ class ConformerDataset(DGLDataset):
         self.use_diffusion_angle_def = use_diffusion_angle_def
         # print("Cache", cache_path)
         # if cache_path: cache_path += "." + mode
+        self.use_name = name
         self.split_path = split_path
         self.mode = mode
         self.pickle_dir = pickle_dir
@@ -316,6 +317,7 @@ class ConformerDataset(DGLDataset):
         self.limit_molecules = limit_molecules
         self.old_rdkit = old_rdkit
         super(ConformerDataset, self).__init__(name, raw_dir = raw_dir, save_dir = save_dir, transform = transform)
+        
 
     def process(self):
         if self.cache_path and os.path.exists(self.cache_path):
@@ -349,10 +351,10 @@ class ConformerDataset(DGLDataset):
         smiles = [smi[len(root):-7] for smi in smiles]
 
         print('Preparing to process', len(smiles), 'smiles')
-        chunk_size = len(smiles)//10
+        chunk_size = len(smiles)//5
         all_smiles = smiles
         smiles = []
-        old_name = self.name
+        old_name = self.use_name
         total_count = 0
         for i in range(5):
             smiles = all_smiles[i*chunk_size : (i+1)*chunk_size]
@@ -373,7 +375,7 @@ class ConformerDataset(DGLDataset):
             print(self.failures)
             if pickle_dir: del self.current_pickle
             self.datapoints = datapoints
-            self.name = old_name + f"_{i}"
+            self.use_name = old_name + f"_{i}"
             self.save()
         return datapoints
     
@@ -612,13 +614,13 @@ class ConformerDataset(DGLDataset):
             data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids = B
             infos.append((A_frag_ids, B_frag_ids))
             graphs.extend([data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg])
-        dgl.data.utils.save_info(self.save_dir + f'/{self.name}_infos.bin', infos)
-        dgl.data.utils.save_graphs(self.save_dir + f'/{self.name}_graphs.bin', graphs)
-        print("Saved Successfully", self.save_dir, self.name, len(self.datapoints))
+        dgl.data.utils.save_info(self.save_dir + f'/{self.use_name}_infos.bin', infos)
+        dgl.data.utils.save_graphs(self.save_dir + f'/{self.use_name}_graphs.bin', graphs)
+        print("Saved Successfully", self.save_dir, self.use_name, len(self.datapoints))
     
     def load(self):
-        graphs, _ = dgl.data.utils.load_graphs(self.save_dir + f'/{self.name}_graphs.bin')
-        info = dgl.data.utils.load_info(self.save_dir + f'/{self.name}_infos.bin')
+        graphs, _ = dgl.data.utils.load_graphs(self.save_dir + f'/{self.use_name}_graphs.bin')
+        info = dgl.data.utils.load_info(self.save_dir + f'/{self.use_name}_infos.bin')
         count = 0
         results_A, results_B = [], []
         for i in range(0, len(graphs), 10):
@@ -630,10 +632,10 @@ class ConformerDataset(DGLDataset):
             results_A.append((data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids))
             results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids))
         self.datapoints = [(a,b) for a,b in zip(results_A, results_B)]
-        print("Loaded Successfully",  self.save_dir, self.name, len(self.datapoints))
+        print("Loaded Successfully",  self.save_dir, self.use_name, len(self.datapoints))
     
     def has_cache(self):
-         return os.path.exists(os.path.join(self.save_dir, f'{self.name}_graphs.bin'))
+         return os.path.exists(os.path.join(self.save_dir, f'{self.use_name}_graphs.bin'))
 
     def __repr__(self):
         return f'Dataset("{self.name}", num_graphs={len(self)},' + \
@@ -811,6 +813,8 @@ def cook_drugs(batch_size = 32, mode = 'train', data_dir='/home/dannyreidenbach/
                                    cache_path=None, #args.cache,
                                    name=f'{dataset}_{mode}_{limit_mols}_final',
                                    pickle_dir=std_pickles,
+                                   raw_dir='/home/dannyreidenbach/data/DRUGS/dgl', 
+                                   save_dir='/home/dannyreidenbach/data/DRUGS/dgl',
                                    use_diffusion_angle_def=use_diffusion_angle_def,
                                    boltzmann_resampler=None)
     dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=num_workers,
@@ -832,8 +836,8 @@ def cook_drugs_local(batch_size = 32, mode = 'train', data_dir='/home/dreidenbac
                                    name=f'{dataset}_{mode}_{limit_mols}_final',
                                    pickle_dir=std_pickles,
                                    use_diffusion_angle_def=use_diffusion_angle_def,
-                                   raw_dir='/home/dreidenbach/data/torsional_diffusion/QM9/dgl', 
-                                   save_dir='/home/dreidenbach/data/torsional_diffusion/QM9/dgl',
+                                   raw_dir='/home/dreidenbach/data/torsional_diffusion/DRUGS/dgl', 
+                                   save_dir='/home/dreidenbach/data/torsional_diffusion/DRUGS/dgl',
                                    boltzmann_resampler=None)
     
     dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=num_workers,
@@ -855,8 +859,31 @@ def cook_drugs_local_fast(batch_size = 32, mode = 'train', data_dir='/home/dreid
                                    name=f'{dataset}_{mode}_{limit_mols}_final_fast',
                                    pickle_dir=std_pickles,
                                    use_diffusion_angle_def=use_diffusion_angle_def,
-                                   raw_dir='/home/dreidenbach/data/torsional_diffusion/QM9/dgl', 
-                                   save_dir='/home/dreidenbach/data/torsional_diffusion/QM9/dgl',
+                                   raw_dir='/home/dreidenbach/data/torsional_diffusion/DRUGS/dgl', 
+                                   save_dir='/home/dreidenbach/data/torsional_diffusion/DRUGS/dgl',
+                                   boltzmann_resampler=None)
+    
+    dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=num_workers,
+                                            collate_fn = collate)
+    return dataloader, data
+
+
+def load_big_drugs(batch_size = 32, mode = 'train', data_dir='/home/dannyreidenbach/data/DRUGS/drugs/',
+                dataset='drugs', limit_mols=0, log_dir='./test_run', num_workers=1, restart_dir=None, seed=0,
+                 split_path='/home/dannyreidenbach/data/DRUGS/split.npy',
+                 std_pickles=None):
+    types = qm9_types if dataset == 'qm9' else drugs_types
+    use_diffusion_angle_def = False
+    data = ConformerDataset(data_dir, split_path, mode, dataset=dataset,
+                                   types=types, transform=None,
+                                   num_workers=num_workers,
+                                   limit_molecules=limit_mols, #args.limit_train_mols,
+                                   cache_path=None, #args.cache,
+                                   name=f'drugs_xl_{mode}_0_final',
+                                   pickle_dir=std_pickles,
+                                   raw_dir='/home/dannyreidenbach/data/DRUGS/dgl', 
+                                   save_dir='/home/dannyreidenbach/data/DRUGS/dgl',
+                                   use_diffusion_angle_def=use_diffusion_angle_def,
                                    boltzmann_resampler=None)
     
     dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=num_workers,

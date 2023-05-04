@@ -12,7 +12,7 @@ coordinates: delta #absolute # or delta or double
 hydra:
   job:
     env_set: 
-      CUDA_VISIBLE_DEVICES: 9
+      CUDA_VISIBLE_DEVICES: 7
   run:
     dir: outputs/${wandb.name}_${now:%Y-%m-%d_%H-%M-%S}
   job_logging:
@@ -33,5 +33,5 @@ hydra:
 
 wandb:
   project: MCG
-  name: DRUGS_full_vae_base
-  notes: testing full DRYGS with standard delta coords + teacher forcing. KL Loss at 1e-3 and no gradients through any kabsch steps. Benchmarking will be done every epoch 
+  name: DRUGS_80up_full_vae_base
+  notes: testing N >= 80 DRUGS with standard delta coords + teacher forcing. KL Loss at 1e-3 and no gradients through any kabsch steps
