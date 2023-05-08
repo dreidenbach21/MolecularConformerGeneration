@@ -12,7 +12,7 @@ coordinates: delta #absolute # or delta or double
 hydra:
   job:
     env_set: 
-      CUDA_VISIBLE_DEVICES: 0
+      CUDA_VISIBLE_DEVICES: 15
   run:
     dir: outputs/${wandb.name}_${now:%Y-%m-%d_%H-%M-%S}
   job_logging:
@@ -33,5 +33,5 @@ hydra:
 
 wandb:
   project: MCG
-  name: QM9_med_vae_kl_dist_anneal_mixing
-  notes: adding additional feature mixing into decoder layer
+  name: QM9_med_vae_kl_dist_anneal_mixing_slower_sched
+  notes: slowing down the LR scheduling

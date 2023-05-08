@@ -14,9 +14,6 @@ import torch.multiprocessing as mp
 from model.benchmarker import *
 
 def load_data(cfg):
-    # geom_path = "/home/dreidenbach/data/GEOM/rdkit_folder/"
-    # qm9_path = geom_path + "qm9/"
-    # drugs_path = geom_path + "drugs/"
     #mp.set_start_method('spawn') # use 'spawn' method instead of 'fork'
     #mp.set_sharing_strategy('file_system') 
     print("Loading DRUGs...")
@@ -32,10 +29,10 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     suffix = f"_{now.strftime('%m-%d_%H-%M-%S')}"
     coordinate_type = cfg.coordinates
     NAME = cfg.wandb['name'] + suffix
-    train_loader, train_data, val_loader, val_data = load_data(cfg.data)
-#     F = cfg.encoder["coord_F_dim"]
-#     D = cfg.encoder["latent_dim"]
-#     model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, coordinate_type, device = "cuda").cuda()
+    # train_loader, train_data, val_loader, val_data = load_data(cfg.data)
+    F = cfg.encoder["coord_F_dim"]
+    D = cfg.encoder["latent_dim"]
+    model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, coordinate_type, device = "cuda").cuda()
     
 #     print("CUDA CHECK", next(model.parameters()).is_cuda)
 #     print("# of Encoder Params = ", sum(p.numel()
@@ -51,12 +48,12 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
 # #                              valid_mols = '/home/dannyreidenbach/data/DRUGS/test_smiles.csv', 
 # #                              dataset = 'drugs',
 # #                              save_dir = '/home/dannyreidenbach/data/DRUGS/test_set')
-#     runner = BenchmarkRunner(batch_size = cfg.data['train_batch_size'], 
-#                              true_mols = '/home/dreidenbach/data/torsional_diffusion/DRUGS/test_mols.pkl', 
-#                              valid_mols = '/home/dreidenbach/data/torsional_diffusion/DRUGS/test_smiles.csv', 
-#                              dataset = 'drugs', 
-#                              save_dir = '/home/dreidenbach/data/torsional_diffusion/DRUGS/test_set')
-#     runner.generate(model, rdkit_only = True)
+    runner = BenchmarkRunner(batch_size = cfg.data['train_batch_size'], 
+                             true_mols = '/data/dreidenbach/data/torsional_diffusion/DRUGS/test_mols.pkl', 
+                             valid_mols = '/data/dreidenbach/data/torsional_diffusion/DRUGS/test_smiles.csv', 
+                             dataset = 'drugs', 
+                             save_dir = '/data/dreidenbach/data/torsional_diffusion/DRUGS/test_set') #_80
+    runner.generate(model, rdkit_only = True, use_wandb=False)
 
     print("Cook Comlete")
 

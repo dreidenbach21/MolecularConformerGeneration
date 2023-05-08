@@ -123,7 +123,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     
     dist_weight = 1e-6
     dist_annealing_rate = 0.005
-    dist_cap = 0.1#0.5
+    dist_cap = 0.1
     for epoch in range(cfg.data['epochs']):
         print("Epoch", epoch)
         if kl_annealing and epoch > 0 and epoch % kl_annealing_interval == 0:
@@ -147,21 +147,11 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
 
             generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss = model(
                 frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg, epoch=epoch)
-            # ipdb.set_trace()
             loss, losses = model.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, AR_loss, step=epoch)
-            # train_loss_log.append(losses)
-            # ipdb.set_trace()
             print(f"Train LOSS = {loss}")
             loss.backward()
-            # memory_usage = get_memory_usage()
-            # wandb.log({"memory_usage": memory_usage})
             losses['Train Loss'] = loss.cpu()
             wandb.log(losses)
-
-            # for name, p in model.named_parameters():
-            #     if p.requires_grad and p.grad is not None and (torch.isnan(p.grad).any() or torch.isnan(p.data).any()):
-            #         print("[LOG]", name, torch.min(p.grad).item(), torch.max(p.grad).item(), torch.min(p.data).item(), torch.max(p.data).item())
-
             parameters = [p for p in model.parameters() if p.grad is not None and p.requires_grad]
             norm_type = 2
             total_norm = 0.0
@@ -198,7 +188,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
                 loss, losses = model.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, AR_loss, step=epoch, log_latent_stats = False)
                 # train_loss_log.append(losses)
                 losses['Val Loss'] = loss.cpu()
-                val_loss += losses['Val Loss']
+                # val_loss += losses['Val Loss']
                 wandb.log({'val_' + key: value for key, value in losses.items()})
                 print(f"Val LOSS = {loss}")
             
@@ -207,8 +197,8 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
             
         # scheduler.step(val_loss)
         scheduler.step()
-        model_path = f'/home/dannyreidenbach/mcg/coagulation/scripts/model_ckpt/{NAME}_{epoch}.pt'
-        torch.save(model.state_dict(), model_path)
+        # model_path = f'/home/dannyreidenbach/mcg/coagulation/scripts/model_ckpt/{NAME}_{epoch}.pt'
+        # torch.save(model.state_dict(), model_path)
         
 
 

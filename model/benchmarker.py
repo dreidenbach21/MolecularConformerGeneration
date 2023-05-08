@@ -83,9 +83,9 @@ def collate(samples):
 
 class BenchmarkRunner():
     def __init__(self, true_mols = '/home/dannyreidenbach/data/QM9/test_mols.pkl', valid_mols = '/home/dannyreidenbach/data/QM9/test_smiles.csv', n_workers = 1, dataset = 'qm9',
-                 D = 64, F = 32, save_dir = '/home/dannyreidenbach/data/QM9/test_set', batch_size = 2000):
-    # def __init__(self, true_mols = '/home/dreidenbach/data/torsional_diffusion/QM9/test_mols.pkl', valid_mols = '/home/dreidenbach/data/torsional_diffusion/QM9/test_smiles.csv', n_workers = 1, dataset = 'qm9',
-    #              D = 64, F = 32, save_dir = '/home/dreidenbach/data/torsional_diffusion/QM9', batch_size = 2000):
+                 D = 64, F = 32, save_dir = '/home/dannyreidenbach/data/QM9/test_set', batch_size = 2000, name = None):
+    # def __init__(self, true_mols = '/data/dreidenbach/data/torsional_diffusion/QM9/test_mols.pkl', valid_mols = '/data/dreidenbach/data/torsional_diffusion/QM9/test_smiles.csv', n_workers = 1, dataset = 'qm9',
+    #              D = 64, F = 32, save_dir = '/data/dreidenbach/data/torsional_diffusion/QM9', batch_size = 2000):
         with open(true_mols, 'rb') as f:
             self.true_mols = pickle.load(f)
         self.threshold = np.arange(0, 2.5, .125)
@@ -93,13 +93,16 @@ class BenchmarkRunner():
         self.dataset = dataset
         self.n_workers = 1
         self.D, self.F = D, F
-        self.name = f'{dataset}_full'#_full_V3_check
+        if name is None:
+            self.name = f'{dataset}_full'#_full_V3_check # dataste _80
+        else:
+            self.name = name
         self.batch_size = batch_size
         self.only_alignmol = False
         self.save_dir = save_dir
         self.types = qm9_types if dataset == 'qm9' else drugs_types
         self.use_diffusion_angle_def = False
-        if False and self.dataset == 'qm9':
+        if self.dataset == 'qm9':
             with open('/home/dreidenbach/code/mcg/coagulation/scripts/qm9_both_fails.txt', 'r') as f:
                 lines = f.readlines()
                 self.check = set([line.strip() for line in lines])
@@ -149,6 +152,11 @@ class BenchmarkRunner():
                 self.model_preds[smi] = [None]
                 self.problem_smiles.add(smi)
                 continue
+            # if true_confs[0].GetNumAtoms() < 80: # skip and not punish the small molecules
+            #     self.model_preds[smi] = [None]
+            #     self.problem_smiles.add(smi)
+            #     continue
+            
             datas = self.featurize_mol(smi, true_confs)
             bad_idx_A = []
             results_A = []

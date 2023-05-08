@@ -85,7 +85,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     )
     save_code(wandb_run)
     train_loader, train_data, val_loader, val_data = load_data(cfg.data)
-    BENCHMARK = BenchmarkRunner(batch_size = cfg.data['train_batch_size'])
+    # BENCHMARK = BenchmarkRunner(batch_size = cfg.data['train_batch_size'])
     F = cfg.encoder["coord_F_dim"]
     D = cfg.encoder["latent_dim"]
     model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, coordinate_type, device = "cuda").cuda()
@@ -111,7 +111,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     # self.optim_steps += 1
     # torch.autograd.set_detect_anomaly(True)
     # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optim, mode='min', factor=0.1, patience=1, verbose=True)
-    scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=1, gamma=0.5)
+    scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=1, gamma=0.8)
 
 
     
@@ -202,8 +202,8 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
                 wandb.log({'val_' + key: value for key, value in losses.items()})
                 print(f"Val LOSS = {loss}")
             
-            print("Test Benchmarks")
-            BENCHMARK.generate(model)
+            # print("Test Benchmarks")
+            # BENCHMARK.generate(model)
             
         # scheduler.step(val_loss)
         scheduler.step()
