@@ -15,17 +15,19 @@ from utils.neko_fixed_attention import neko_MultiheadAttention
 import ipdb
 
 class Decoder(nn.Module):
-    def __init__(self, atom_embedder, coordinate_type, n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
+    def __init__(self, atom_embedder, coordinate_type, n_lays, debug, device_A, device_B, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
                  use_edge_features_in_gmn, use_mean_node_features, atom_emb_dim, latent_dim, coord_F_dim,
                  dropout, nonlin, leakyrelu_neg_slope, random_vec_dim=0, random_vec_std=1, use_scalar_features=True,
                  num_A_feats=None, save_trajectories=False, weight_sharing = True, conditional_mask=False, verbose = False, **kwargs):
         super(Decoder, self).__init__()
         # self.mha = torch.nn.MultiheadAttention(embed_dim = 3, num_heads = 1, batch_first = True)
         self.verbose = verbose
-        self.mha = neko_MultiheadAttention(embed_dim = 3, num_heads = 1, batch_first = True)
+        self.mha = neko_MultiheadAttention(embed_dim = 3, num_heads = 1, batch_first = True).to(device_A)
         self.double = False
+        self.device_A = device_A
+        self.device_B = device_B
         if coordinate_type == "delta":
-            self.iegmn = IEGMN_Bidirectional_Delta(n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
+            self.iegmn = IEGMN_Bidirectional_Delta(n_lays, debug, device_A, device_B, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
                  use_edge_features_in_gmn, use_mean_node_features, atom_emb_dim, latent_dim, coord_F_dim,
                  dropout, nonlin, leakyrelu_neg_slope, random_vec_dim, random_vec_std, use_scalar_features,
                  save_trajectories, weight_sharing, conditional_mask, **kwargs).cuda() #iegmn
@@ -42,29 +44,30 @@ class Decoder(nn.Module):
                     save_trajectories, weight_sharing, conditional_mask, **kwargs).cuda() #iegmn
         self.atom_embedder = atom_embedder # taken from the FG encoder
         D, F = latent_dim, coord_F_dim
-        self.h_channel_selection = Scalar_MLP(D, 2*D, D)
+        
+        # self.h_channel_selection = Scalar_MLP(D, 2*D, D)
         # self.mse = nn.MSELoss()
         # norm = "ln"
         if kwargs['cc_norm'] == "bn":
-            self.eq_norm = VNBatchNorm(F)
-            self.inv_norm = nn.BatchNorm1d(D)
-            self.eq_norm_2 = VNBatchNorm(3)
-            self.inv_norm_2 = nn.BatchNorm1d(D)
+            self.eq_norm = VNBatchNorm(F).to(self.device_A)
+            self.inv_norm = nn.BatchNorm1d(D).to(self.device_A)
+            self.eq_norm_2 = VNBatchNorm(3).to(self.device_A)
+            self.inv_norm_2 = nn.BatchNorm1d(D).to(self.device_A)
         elif kwargs['cc_norm'] == "ln":
-            self.eq_norm = VNLayerNorm(F)
-            self.inv_norm = nn.LayerNorm(D)
-            self.eq_norm_2 = VNLayerNorm(3)
-            self.inv_norm_2 = nn.LayerNorm(D)
+            self.eq_norm = VNLayerNorm(F).to(self.device_A)
+            self.inv_norm = nn.LayerNorm(D).to(self.device_A)
+            self.eq_norm_2 = VNLayerNorm(3).to(self.device_A)
+            self.inv_norm_2 = nn.LayerNorm(D).to(self.device_A)
         else:
             assert(1 == 0)
-        self.device = device
+        
         # self.feed_forward_V = Vector_MLP(F, 2*F, 2*F, F, leaky = False, use_batchnorm = False)
-        self.feed_forward_V = nn.Sequential(VNLinear(F, 2*F), VN_MLP(2*F, F, F, F, leaky = False, use_batchnorm = False))
-        self.feed_forward_h = Scalar_MLP(D, 2*D, D)
+        self.feed_forward_V = nn.Sequential(VNLinear(F, 2*F), VN_MLP(2*F, F, F, F, leaky = False, use_batchnorm = False)).to(self.device_A)
+        # self.feed_forward_h = Scalar_MLP(D, 2*D, D)
 
         # self.feed_forward_V_3 = Vector_MLP(3, F, F, 3, leaky = False, use_batchnorm = False)
-        self.feed_forward_V_3 = nn.Sequential(VNLinear(3, F), VN_MLP(F, 3, 3, 3, leaky = False, use_batchnorm = False))
-        self.feed_forward_h_3 = Scalar_MLP(D, 2*D, D)
+        self.feed_forward_V_3 = nn.Sequential(VNLinear(3, F), VN_MLP(F, 3, 3, 3, leaky = False, use_batchnorm = False)).to(self.device_A)
+        # self.feed_forward_h_3 = Scalar_MLP(D, 2*D, D)
         self.teacher_forcing = kwargs['teacher_forcing']
         self.mse_none = nn.MSELoss(reduction ='none')
     
@@ -193,7 +196,7 @@ class Decoder(nn.Module):
 
             subgeo = dgl.node_subgraph(geos[idx], ids)
             geo_result.append(subgeo)
-        return dgl.batch(result).to(self.device), dgl.batch(geo_result).to(self.device) #valid, check
+        return dgl.batch(result).to(self.device_A), dgl.batch(geo_result).to(self.device_A) #valid, check
 
     
     def gather_current_molecule(self, final_molecule, current_molecule_ids, progress, true_geo_batch):
@@ -214,7 +217,7 @@ class Decoder(nn.Module):
 
             subgeo = dgl.node_subgraph(geos[idx], ids)
             geo_result.append(subgeo)
-        return dgl.batch(result).to(self.device), dgl.batch(geo_result).to(self.device)
+        return dgl.batch(result).to(self.device_B), dgl.batch(geo_result).to(self.device_B)
 
     def update_molecule(self, final_molecule, id_batch, coords_A, h_feats_A, latent):
         num_nodes = final_molecule.batch_num_nodes()
@@ -453,9 +456,9 @@ class Decoder(nn.Module):
             num_molecule_chunks = [len(x) for x in id_batch if x is not None]
             loss_idx_t = [x for i, x in enumerate(loss_idx) if id_batch[i] is not None]
             num_molecule_chunks_condition = [x.shape[0] for x in ref_coords_B_split] if current_molecule is not None else None
-            ar_losses = self.ar_loss_step(coords_A, ref_coords_A, num_molecule_chunks, model_predicted_B, ref_coords_B, num_molecule_chunks_condition, True)
-            for idx, ar_loss in zip(loss_idx_t, ar_losses):
-                losses[idx].append(ar_loss) #+= ar_loss
+            # ar_losses = self.ar_loss_step(coords_A, ref_coords_A, num_molecule_chunks, model_predicted_B, ref_coords_B, num_molecule_chunks_condition, True)
+            # for idx, ar_loss in zip(loss_idx_t, ar_losses):
+            #     losses[idx].append(ar_loss) #+= ar_loss
                 
             self.update_molecule(final_molecule, id_batch, coords_A, h_feats_A, latent)
             progress -= torch.tensor([len(x) if x is not None else 0 for x in id_batch])
@@ -473,8 +476,8 @@ class Decoder(nn.Module):
             del latent, geo_latent
         # ipdb.set_trace()
         del current_molecule, geo_current
-        for idx, natoms in enumerate(total_num_atoms):
-            losses[idx] = (sum(losses[idx])/natoms).unsqueeze(0)
-            if self.verbose: print("[Final AR Loss]", natoms, losses[idx])
-        return final_molecule.to(self.device), rdkit_reference, returns, (X_cc, H_cc), torch.cat(losses).mean()
+        # for idx, natoms in enumerate(total_num_atoms):
+        #     losses[idx] = (sum(losses[idx])/natoms).unsqueeze(0)
+        #     if self.verbose: print("[Final AR Loss]", natoms, losses[idx])
+        return final_molecule.to(self.device_A), rdkit_reference, returns, (X_cc, H_cc), None #torch.cat(losses).mean()
 

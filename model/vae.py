@@ -2,13 +2,14 @@ from encoder import *
 from decoder import *
 
 class VAE(nn.Module):
-    def __init__(self, kl_params, encoder_params, decoder_params, loss_params, coordinate_type, device = "cuda"):
+    def __init__(self, kl_params, encoder_params, decoder_params, loss_params, coordinate_type):
         super(VAE, self).__init__()
-        self.encoder = Encoder(**encoder_params).to(device)
-        self.decoder = Decoder(self.encoder.atom_embedder, coordinate_type, **decoder_params).to(device)
+        self.encoder = Encoder(**encoder_params) #.to(device)
+        self.decoder = Decoder(self.encoder.atom_embedder, coordinate_type, **decoder_params) #.to(device)
         self.mse = nn.MSELoss()
         self.mse_none = nn.MSELoss(reduction ='none')
-        self.device = device
+        self.device_A = encoder_params['device_A']
+        self.device_B = encoder_params['device_B']
         F = encoder_params["coord_F_dim"]
         D = encoder_params["latent_dim"]
         
@@ -53,8 +54,8 @@ class VAE(nn.Module):
         # print("[ENC] encoder output geom loss adn geom cg loss", geom_losses, geom_loss_cg)
         natoms = A_graph.batch_num_nodes()
         nbeads = A_cg.batch_num_nodes()
-        kl_v, kl_v_un_clamped = torch.tensor([0]).to(results["prior_mean_V"].device), torch.tensor([0]).to(results["prior_mean_V"].device)
-        mim = torch.tensor([0]).to(results["prior_mean_V"].device)
+        kl_v, kl_v_un_clamped = torch.tensor([0]).to(self.device_A), torch.tensor([0]).to(self.device_A)
+        mim = torch.tensor([0]).to(self.device_A)
         if not validation:
             kl_v, kl_v_un_clamped = self.kl(results["posterior_mean_V"], results["posterior_logvar_V"], results["prior_mean_V"], results["prior_logvar_V"], natoms, nbeads, coordinates = True)
             # kl_v2, kl_v_un_clamped2 = self.kl_built_in(results["posterior_mean_V"], results["posterior_logvar_V"], results["prior_mean_V"], results["prior_logvar_V"], natoms, nbeads, coordinates = True)
@@ -68,8 +69,8 @@ class VAE(nn.Module):
             dec_out = self.decoder(B_cg, B_graph, frag_ids, geometry_graph_B)
             self.decoder.teacher_forcing = prev_force
         kl_h = 0
-        generated_molecule, rdkit_reference, dec_results, channel_selection_info, AR_loss = dec_out
-        return generated_molecule, rdkit_reference, dec_results, channel_selection_info, (kl_v, kl_h, kl_v_un_clamped, mim), enc_out, AR_loss #, kl_v_reg), enc_out
+        generated_molecule, rdkit_reference, dec_results, channel_selection_info, _ = dec_out
+        return generated_molecule, rdkit_reference, dec_results, channel_selection_info, (kl_v, kl_h, kl_v_un_clamped, mim), enc_out, 0 #, kl_v_reg), enc_out
     
     def distance_loss(self, generated_molecule, geometry_graphs):
         geom_loss = []
@@ -171,7 +172,7 @@ class VAE(nn.Module):
             A = A + torch.eye(A.shape[0]).to(A.device) * 1e-5 #added noise to help with gradients
             if torch.isnan(A).any() or torch.isinf(A).any():
                 print("\n\n\n\n\n\n\n\n\n\nThe SVD tensor contains NaN or Inf values")
-                import ipdb; ipdb.set_trace()
+                # import ipdb; ipdb.set_trace()
             U, S, Vt = torch.linalg.svd(A)
             # corr_mat = torch.diag(1e-7 + torch.tensor([1, 1, torch.sign(torch.det(A))], device=lig_coords_pred.device))
             corr_mat = torch.diag(torch.tensor([1, 1, torch.sign(torch.det(A))], device=lig_coords_pred.device))
