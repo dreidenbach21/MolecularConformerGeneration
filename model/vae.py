@@ -32,16 +32,16 @@ class VAE(nn.Module):
         # self.posterior_mean_V = VN_MLP(2*F, F, F, F, use_batchnorm = False)
         self.posterior_mean_V = nn.Sequential(VN_MLP(2*F, 2*F, 2*F, 2*F, use_batchnorm = False), VN_MLP(2*F, F, F, F, use_batchnorm = False))
         # self.posterior_mean_V = Vector_MLP(2*F, 2*F, 2*F, F, use_batchnorm = False) 
-        self.posterior_mean_h = Scalar_MLP(2*D, 2*D, D, use_batchnorm = False)
+        # self.posterior_mean_h = Scalar_MLP(2*D, 2*D, D, use_batchnorm = False)
         self.posterior_logvar_V = Scalar_MLP(2*F*3, 2*F*3, F, use_batchnorm = False)# need to flatten to get equivariant noise N x F x 1
-        self.posterior_logvar_h = Scalar_MLP(2*D, 2*D, D, use_batchnorm = False)
+        # self.posterior_logvar_h = Scalar_MLP(2*D, 2*D, D, use_batchnorm = False)
 
         # self.prior_mean_V = VN_MLP(F,F,F,F, use_batchnorm = False)
         self.prior_mean_V = nn.Sequential(VN_MLP(F, F, F, F, use_batchnorm = False), VN_MLP(F, F, F, F, use_batchnorm = False))
         # self.prior_mean_V = Vector_MLP(F,F,F,F, use_batchnorm = False)
-        self.prior_mean_h = Scalar_MLP(D, D, D, use_batchnorm = False)
+        # self.prior_mean_h = Scalar_MLP(D, D, D, use_batchnorm = False)
         # self.prior_logvar_V = Scalar_MLP(F*3, F*3, F, use_batchnorm = False) #! No longer need since hard coding to 0
-        self.prior_logvar_h = Scalar_MLP(D, D, D, use_batchnorm = False)
+        # self.prior_logvar_h = Scalar_MLP(D, D, D, use_batchnorm = False)
         self.bn = VNBatchNorm(F)
 
     # def flip_teacher_forcing(self):
@@ -59,7 +59,8 @@ class VAE(nn.Module):
             kl_v, kl_v_un_clamped = self.kl(results["posterior_mean_V"], results["posterior_logvar_V"], results["prior_mean_V"], results["prior_logvar_V"], natoms, nbeads, coordinates = True)
             # kl_v2, kl_v_un_clamped2 = self.kl_built_in(results["posterior_mean_V"], results["posterior_logvar_V"], results["prior_mean_V"], results["prior_logvar_V"], natoms, nbeads, coordinates = True)
             # ignoring MIM for now
-            # mim = self.mim(results["Z_V"], results["posterior_mean_V"], results["posterior_logvar_V"], results["prior_mean_V"], results["prior_logvar_V"], natoms, nbeads, coordinates = True)
+            if self.use_mim:
+                mim = self.mim(results["Z_V"], results["posterior_mean_V"], results["posterior_logvar_V"], results["prior_mean_V"], results["prior_logvar_V"], natoms, nbeads, coordinates = True)
             dec_out = self.decoder(A_cg, B_graph, frag_ids, geometry_graph_A)
         else:
             prev_force = self.decoder.teacher_forcing
@@ -84,39 +85,21 @@ class VAE(nn.Module):
         return torch.mean(torch.cat(geom_loss))
 
     def loss_function(self, generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geometry_graph, AR_loss, step = 0, log_latent_stats = True):
-        # kl_v, kl_h, kl_v_reg = KL_terms
         kl_v, kl_h, kl_v_unclamped, mim = KL_terms
-        # print("[Loss Func] KL V", kl_v)
-        # print("[Loss Func] kl h", kl_h)
         if self.use_mim:
             kl_loss = 0.1*mim
         else:
             kl_loss = self.kl_v_beta*kl_v # + self.kl_h_beta*kl_h # + self.kl_reg_beta*kl_v_reg
-        # kl_loss = 0.1*mim
-        # if step < 0:#50:
-        #     kl_loss = 0.1*kl_loss
+
         x_cc, h_cc = channel_selection_info
         x_true = rdkit_reference.ndata['x_true']
-        # print("[Loss Func] Channel Selection Norms (x,h): ", torch.norm(x_cc, 2), torch.norm(h_cc, 2), torch.norm(x_true, 2))
-        # x_cc_loss = (torch.norm(x_cc, 2) - torch.norm(x_true, 2))**2
-        # print("[Loss Func] X CC norm diff loss", x_cc_loss)
+
         x_cc_loss = torch.tensor([0]) #[]
-        # start = 0
-        # for natoms in generated_molecule.batch_num_nodes():
-        #     x_cc_loss.append(self.rmsd(x_cc[start: start + natoms], x_true[start: start + natoms], align = True).unsqueeze(0))
-        #     start += natoms
-        # # print("[Loss Func] aligned X CC loss", x_cc_loss)
-        # x_cc_loss = torch.cat(x_cc_loss).mean() #sum(x_cc_loss) switch to mean over batch size
-        
         ar_mse = AR_loss
         # ar_mse, global_mse, ar_dist_loss = self.coordinate_loss(dec_results, generated_molecule, align =  True)
         # import ipdb; ipdb.set_trace()
         _, global_mse = self.coordinate_loss(dec_results, generated_molecule, align =  True)
-        # print()
-        # print("[Loss Func] Auto Regressive MSE", ar_mse)
-        # print("[Loss Func] Kabsch Align MSE", global_mse)
-        # print("[Loss Func] step", step, "KL Loss", kl_loss)
-        # print()
+
         loss =  self.lambda_ar_mse*ar_mse + self.lambda_global_mse*global_mse + kl_loss #+ cc_loss
         results, geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg = enc_out
         
@@ -126,19 +109,13 @@ class VAE(nn.Module):
             l2_vp = torch.norm(self.std(results["prior_logvar_V"]), 2)**2
             l2_vp2 = torch.norm(results["prior_mean_V"], 2)**2
             l2_d = torch.norm(results["posterior_mean_V"]-results["prior_mean_V"], 2)**2
-        # l2_h = torch.norm(results["posterior_logvar_h"], 2)**2
-        # print("log variance norm: v, h: ", l2_v, l2_h)
-        # l2_loss = 0 #self.weight_decay_v*l2_v+self.weight_decay_h*l2_h
-        # loss += l2_loss
-        # ipdb.set_trace()
+
         rdkit_loss = [self.rmsd(m.ndata['x_ref'], m.ndata['x_true'], align = True).unsqueeze(0) for m in dgl.unbatch(rdkit_reference)]
         rdkit_loss = self.lambda_global_mse*torch.cat(rdkit_loss).mean()
 
         distance_loss = self.lambda_distance*self.distance_loss(generated_molecule, geometry_graph)
-        # ar_dist_loss = self.lambda_ar_distance*ar_dist_loss #! Set to 0 for now
-        # print("[Loss Func] distance", distance_loss)
-        # print("[Loss Func] ar distance", ar_dist_loss)
         loss += distance_loss #+ ar_dist_loss
+        
         if log_latent_stats:
             loss_results = {
                 'latent reg loss': kl_loss.cpu(),
@@ -178,7 +155,7 @@ class VAE(nn.Module):
 
     def std(self, input):
         if self.kl_softplus:
-            return 1e-12 + F.softplus(input / 2)
+            return 1e-6 + F.softplus(input / 2)
         return 1e-12 + torch.exp(input / 2)
 
     def align(self, source, target):
@@ -287,13 +264,14 @@ class VAE(nn.Module):
         if not validation:
             # print("[Encoder] ecn output V A", torch.min(v_A).item(), torch.max(v_A).item())
             posterior_input_V = torch.cat((v_A, v_B), dim = 1) # N x 2F x 3
-            posterior_input_h = torch.cat((h_A, h_B), dim = 1) # N x 2D
+            # posterior_input_h = torch.cat((h_A, h_B), dim = 1) # N x 2D
             posterior_mean_V = self.posterior_mean_V(posterior_input_V)
             # print("[Encoder] pre BN posterior mean V", torch.min(posterior_mean_V).item(), torch.max(posterior_mean_V).item()) #, torch.sum(posterior_mean_V, dim = 1))
             # posterior_mean_V = self.bn(posterior_mean_V) #made blow up worse: Trying VN Batch Norm
-            posterior_mean_h = self.posterior_mean_h(posterior_input_h)
+            # posterior_mean_h = self.posterior_mean_h(posterior_input_h)
             posterior_logvar_V = self.posterior_logvar_V(posterior_input_V.reshape((posterior_input_V.shape[0], -1))).unsqueeze(2)
-            posterior_logvar_h = self.posterior_logvar_h(posterior_input_h)
+            # posterior_logvar_h = self.posterior_logvar_h(posterior_input_h)
+            # posterior_logvar_V = torch.clamp(posterior_logvar_V, max = ) #TODO do I want to clamp
             # print("[Encoder] posterior mean V", torch.min(posterior_mean_V).item(), torch.max(posterior_mean_V).item()) #, torch.sum(posterior_mean_V, dim = 1))
             # print("[Encoder] posterior logvar V", torch.min(posterior_logvar_V).item(), torch.max(posterior_logvar_V).item()) #, torch.sum(posterior_logvar_V,  dim = 1))
             # print("[Encoder] posterior mean h", torch.min(posterior_mean_h).item(), torch.max(posterior_mean_h).item(), torch.sum(posterior_mean_h).item())
@@ -301,52 +279,43 @@ class VAE(nn.Module):
         
         # print("[Encoder] ecn output V B", torch.min(v_B).item(), torch.max(v_B).item())
         prior_mean_V = self.prior_mean_V(v_B)
-        prior_mean_h = self.prior_mean_h(h_B)
+        # prior_mean_h = self.prior_mean_h(h_B)
         # prior_logvar_V = self.prior_logvar_V(v_B.reshape((v_B.shape[0], -1))).unsqueeze(2)
         # ! Setting Prior log var to 0 so std = 1 no more clamping
         prior_logvar_V = torch.zeros((v_B.shape[0], v_B.shape[1])).unsqueeze(2).to(v_B.device) # N x F x 1
-        prior_logvar_h = self.prior_logvar_h(h_B)
-        # if self.kl_prior_logvar_clamp > -1:
-        #     prior_logvar_V = torch.clamp(prior_logvar_V, max = self.kl_prior_logvar_clamp)
-        # print("[Encoder] prior mean V", torch.min(prior_mean_V).item(), torch.max(prior_mean_V).item()) #, torch.sum(prior_mean_V,  dim = 1))
-        # print("[Encoder] prior logvar V", torch.min(prior_logvar_V).item(), torch.max(prior_logvar_V).item()) #, torch.sum(prior_logvar_V,  dim = 1))
-        # print("[Encoder] prior mean h", torch.min(prior_mean_h).item(), torch.max(prior_mean_h).item(), torch.sum(prior_mean_h).item())
-        # print("[Encoder] prior logvar h", torch.min(prior_logvar_h).item(), torch.max(prior_logvar_h).item(), torch.sum(prior_logvar_h).item())
+        # prior_logvar_h = self.prior_logvar_h(h_B)
 
-        # print("\n[Enocoder] prior logvar mlp weight norms", torch.norm(self.prior_logvar_V.linear.weight), torch.norm(self.prior_logvar_V.linear2.weight))
-        # print("\n[Enocoder] posterior logvar mlp weight norms", torch.norm(self.posterior_logvar_V.linear.weight), torch.norm(self.posterior_logvar_V.linear2.weight))
         if validation:
             Z_V = self.reparameterize(prior_mean_V, prior_logvar_V, mean_only=True)
-            Z_h = self.reparameterize(prior_mean_h, prior_logvar_h, mean_only=True)
+            # Z_h = self.reparameterize(prior_mean_h, prior_logvar_h, mean_only=True)
         else:
             Z_V = self.reparameterize(posterior_mean_V, posterior_logvar_V)
-            Z_h = self.reparameterize(posterior_mean_h, posterior_logvar_h)
-        # print("[Encoder] Z_V post vae step", torch.min(Z_V).item(), torch.max(Z_V).item())
+            # Z_h = self.reparameterize(posterior_mean_h, posterior_logvar_h)
 
         A_cg.ndata["Z_V"] = Z_V
-        A_cg.ndata["Z_h"] = Z_h
+        # A_cg.ndata["Z_h"] = Z_h
         B_cg.ndata["Z_V"] = Z_V
-        B_cg.ndata["Z_h"] = Z_h
+        # B_cg.ndata["Z_h"] = Z_h
 
         results = {
             "Z_V": Z_V,
-            "Z_h": Z_h,
+            # "Z_h": Z_h,
             "v_A": v_A,
             "v_B": v_B,
             "h_A": h_A,
             "h_B": h_B,
 
             "prior_mean_V": prior_mean_V,
-            "prior_mean_h": prior_mean_h,
+            # "prior_mean_h": prior_mean_h,
             "prior_logvar_V": prior_logvar_V,
-            "prior_logvar_h": prior_logvar_h,
+            # "prior_logvar_h": prior_logvar_h,
         }
         if not validation:
             results.update({
             "posterior_mean_V": posterior_mean_V,
-            "posterior_mean_h": posterior_mean_h,
+            # "posterior_mean_h": posterior_mean_h,
             "posterior_logvar_V": posterior_logvar_V,
-            "posterior_logvar_h": posterior_logvar_h,
+            # "posterior_logvar_h": posterior_logvar_h,
             })
         return results, geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg
 
@@ -354,7 +323,7 @@ class VAE(nn.Module):
         if mean_only:
             return mean
         if self.kl_softplus:
-            sigma = 1e-12 + F.softplus(scale*logvar / 2)
+            sigma = 1e-6 + F.softplus(scale*logvar / 2)
         else:
             sigma = 1e-12 + torch.exp(scale*logvar / 2)
         eps = torch.randn_like(mean)
@@ -366,8 +335,8 @@ class VAE(nn.Module):
         # ! Look into budget per molecule
         free_bits_per_dim = self.kl_free_bits/z_mean[0].numel()
         if self.kl_softplus:
-            p_std = 1e-12 + F.softplus(z_logvar / 2)
-            q_std = 1e-12 + F.softplus(z_logvar_prior / 2)
+            p_std = 1e-6 + F.softplus(z_logvar / 2)
+            q_std = 1e-6 + F.softplus(z_logvar_prior / 2)
         else:
             p_std = 1e-12 + torch.exp(z_logvar / 2)
             q_std = 1e-12 + torch.exp(z_logvar_prior / 2)

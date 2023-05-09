@@ -10,7 +10,7 @@ import torch
 import wandb
 import random
 import logging
-from utils.torsional_diffusion_data_all import load_big_drugs  # , QM9_DIMS, DRUG_DIMS
+from utils.torsional_diffusion_data_all import cook_drugs, load_big_drugs  # , QM9_DIMS, DRUG_DIMS
 from model.vae import VAE
 import datetime
 from model.benchmarker import *
@@ -19,8 +19,8 @@ import glob
 
 def load_data(cfg):
     print("Loading DRUGS...")
-    train_loader, train_data = load_big_drugs(batch_size=cfg['train_batch_size'], mode='train', limit_mols=cfg['train_data_limit'])
-    val_loader, val_data = load_big_drugs(batch_size=cfg['val_batch_size'], mode='val', limit_mols=cfg['val_data_limit'])
+    train_loader, train_data = cook_drugs(batch_size=cfg['train_batch_size'], mode='train', limit_mols=cfg['train_data_limit'])
+    val_loader, val_data = cook_drugs(batch_size=cfg['val_batch_size'], mode='val', limit_mols=cfg['val_data_limit'])
     print("Loading DRUGS --> Done")
     return train_loader, train_data, val_loader, val_data
 
@@ -111,7 +111,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     # self.optim_steps += 1
     # torch.autograd.set_detect_anomaly(True)
     # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optim, mode='min', factor=0.1, patience=1, verbose=True)
-    scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=1, gamma=0.5)
+    scheduler = torch.optim.lr_scheduler.StepLR(optim, step_size=1, gamma=0.8)
 
 
     
@@ -122,8 +122,8 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     kl_cap = 1e-1
     
     dist_weight = 1e-6
-    dist_annealing_rate = 0.005
-    dist_cap = 0.1
+    dist_annealing_rate = 0.05
+    dist_cap = 0.5
     for epoch in range(cfg.data['epochs']):
         print("Epoch", epoch)
         if kl_annealing and epoch > 0 and epoch % kl_annealing_interval == 0:
@@ -170,6 +170,8 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
             del generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss, losses
             if count > 0 and count %10 == 0:
                 torch.cuda.empty_cache()
+                model_path = f'/home/dannyreidenbach/mcg/coagulation/scripts/model_ckpt/{NAME}_{epoch}_temp.pt'
+                torch.save(model.state_dict(), model_path)
             count+=1
 
         print("Validation")
@@ -197,8 +199,8 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
             
         # scheduler.step(val_loss)
         scheduler.step()
-        # model_path = f'/home/dannyreidenbach/mcg/coagulation/scripts/model_ckpt/{NAME}_{epoch}.pt'
-        # torch.save(model.state_dict(), model_path)
+        model_path = f'/home/dannyreidenbach/mcg/coagulation/scripts/model_ckpt/{NAME}_{epoch}.pt'
+        torch.save(model.state_dict(), model_path)
         
 
 

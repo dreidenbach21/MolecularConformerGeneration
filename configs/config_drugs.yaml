@@ -2,7 +2,7 @@
 defaults:
   - encoder: medium_drugs #medium #small
   - decoder: medium #medium #small
-  - vae: base
+  - vae: drugs
   - optimizer: drugs
   - losses: base
   - data: drugs

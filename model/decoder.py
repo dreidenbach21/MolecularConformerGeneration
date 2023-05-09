@@ -104,12 +104,11 @@ class Decoder(nn.Module):
     def channel_selection(self, A_cg, B, cg_frag_ids):
         # ! FF + Add Norm
         Z_V = A_cg.ndata["Z_V"]# N x F x 3
-        Z_h = A_cg.ndata["Z_h"] # N x D
+        # Z_h = A_cg.ndata["Z_h"] # N x D
         N, F, _ = Z_V.shape
-        _, D = Z_h.shape
+        # _, D = Z_h.shape
         if self.verbose: print("[CC] V input", torch.min(Z_V).item(), torch.max(Z_V).item())
-        if self.verbose: print("[CC] h input", torch.min(Z_h).item(), torch.max(Z_h).item())
-        # ipdb.set_trace()
+        # if self.verbose: print("[CC] h input", torch.min(Z_h).item(), torch.max(Z_h).item())
         Z_V_ff = self.feed_forward_V(Z_V)
         # Z_h_ff = self.feed_forward_h(Z_h)
         if self.verbose: print("[CC] V input FF", torch.min(Z_V_ff).item(), torch.max(Z_V_ff).item())
