@@ -77,7 +77,7 @@ def get_dataloader(dataset, seed, batch_size=300, num_workers=1, mode = 'train')
         use_ddp = True
     else:
         use_ddp = False
-    dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=use_ddp, batch_size=batch_size,
+    dataloader = dgl.dataloading.GraphDataLoader(dataset, use_ddp=use_ddp, batch_size=batch_size,
                                                  shuffle=True, drop_last=False, num_workers=num_workers, collate_fn = collate)
     return dataloader
 
@@ -93,12 +93,12 @@ def run(cfg, rank, world_size, train_dataset, val_dataset, seed=0):
     val_loader = get_dataloader(train_dataset,seed)
     
     print("CUDA CHECK", next(model.parameters()).is_cuda)
-    print("# of Encoder Params = ", sum(p.numel()
-          for p in model.encoder.parameters() if p.requires_grad))
-    print("# of Decoder Params = ", sum(p.numel()
-          for p in model.decoder.parameters() if p.requires_grad))
-    print("# of VAE Params = ", sum(p.numel()
-          for p in model.parameters() if p.requires_grad))
+    # print("# of Encoder Params = ", sum(p.numel()
+    #       for p in model.encoder.parameters() if p.requires_grad))
+    # print("# of Decoder Params = ", sum(p.numel()
+    #       for p in model.decoder.parameters() if p.requires_grad))
+    # print("# of VAE Params = ", sum(p.numel()
+    #       for p in model.parameters() if p.requires_grad))
     if cfg.optimizer.optim == 'adamw':
         optim = torch.optim.AdamW(model.parameters(), lr= cfg.optimizer.lr)
     elif cfg.optimizer.optim == 'adam':
@@ -140,8 +140,8 @@ def run(cfg, rank, world_size, train_dataset, val_dataset, seed=0):
             dist_weight += dist_annealing_rate
             dist_weight = min(dist_weight, dist_cap)
         if kl_annealing:
-            model.kl_v_beta = kl_weight
-            model.lambda_distance = dist_weight
+            model.module.kl_v_beta = kl_weight
+            model.module.lambda_distance = dist_weight
         count = 0
         
         for A_batch, B_batch in train_loader:
@@ -154,7 +154,7 @@ def run(cfg, rank, world_size, train_dataset, val_dataset, seed=0):
 
             generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss = model(
                 frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg, epoch=epoch)
-            loss, losses = model.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, AR_loss, step=epoch)
+            loss, losses = model.module.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, AR_loss, step=epoch)
             print(f"Train LOSS = {loss}")
             loss.backward()
             losses['Train Loss'] = loss.cpu()
@@ -167,7 +167,7 @@ def run(cfg, rank, world_size, train_dataset, val_dataset, seed=0):
                 param_norm = p.grad.detach().data.norm(2)
                 total_norm += param_norm.item() ** 2
             total_norm = total_norm ** 0.5
-            print(f"Train LOSS = {loss}")
+            print(f"Rank {rank} count {count} Train LOSS = {loss}")
             print("TOTAL GRADIENT NORM", total_norm)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=cfg.optimizer.clip_grad_norm, norm_type=2) 
             optim.step()
@@ -196,7 +196,7 @@ def run(cfg, rank, world_size, train_dataset, val_dataset, seed=0):
                 generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss = model(
                         B_frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg, epoch=epoch, validation = True)
                 # ipdb.set_trace()
-                loss, losses = model.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, AR_loss, step=epoch, log_latent_stats = False)
+                loss, losses = model.module.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, AR_loss, step=epoch, log_latent_stats = False)
                 # train_loss_log.append(losses)
                 losses['Val Loss'] = loss.cpu()
                 # val_loss += losses['Val Loss']
@@ -210,7 +210,7 @@ def run(cfg, rank, world_size, train_dataset, val_dataset, seed=0):
         # scheduler.step(val_loss)
         scheduler.step()
         model_path = f'/home/dannyreidenbach/mcg/coagulation/scripts/model_ckpt/{NAME}_{epoch}_{rank}.pt'
-        torch.save(model.state_dict(), model_path)
+        torch.save(model.module.state_dict(), model_path)
         
     print("Training Complete", rank, world_size, seed)
     dist.destroy_process_group()

@@ -629,17 +629,17 @@ class Pooling_3D_Layer(nn.Module):
             n = fine_x_A.shape[0]
             D = fine_h_A.shape[1]
             # pooling graph has n + N nodes
-            A_pool.ndata['x_fine'] = torch.cat((fine_x_A, torch.zeros((N,3))), dim = 0).to(self.device)
-            B_pool.ndata['x_fine'] = torch.cat((fine_x_B, torch.zeros((N,3))), dim = 0).to(self.device)
+            A_pool.ndata['x_fine'] = torch.cat((fine_x_A, torch.zeros((N,3)).to(self.device)), dim = 0)
+            B_pool.ndata['x_fine'] = torch.cat((fine_x_B, torch.zeros((N,3)).to(self.device)), dim = 0)
             coarse_x_A = pool_x_A[-N:,:] #! due to painn we use the current coordinates for the message passing
             coarse_x_B = pool_x_B[-N:,:]
-            A_pool.ndata['x_coarse'] = torch.cat((torch.zeros((n,3)), coarse_x_A), dim = 0).to(self.device)
-            B_pool.ndata['x_coarse'] = torch.cat((torch.zeros((n,3)), coarse_x_B), dim = 0).to(self.device)
+            A_pool.ndata['x_coarse'] = torch.cat((torch.zeros((n,3)).to(self.device), coarse_x_A), dim = 0)
+            B_pool.ndata['x_coarse'] = torch.cat((torch.zeros((n,3)).to(self.device), coarse_x_B), dim = 0)
 
-            A_pool.ndata['feat_fine'] = torch.cat((fine_h_A, torch.zeros((N,D))), dim = 0).to(self.device)
-            B_pool.ndata['feat_fine'] = torch.cat((fine_h_B, torch.zeros((N,D))), dim = 0).to(self.device)
-            A_pool.ndata['feat_coarse'] = torch.cat((torch.zeros((n,D)), coarse_h_A), dim = 0).to(self.device)
-            B_pool.ndata['feat_coarse'] = torch.cat((torch.zeros((n,D)), coarse_h_B), dim = 0).to(self.device)
+            A_pool.ndata['feat_fine'] = torch.cat((fine_h_A, torch.zeros((N,D)).to(self.device)), dim = 0)
+            B_pool.ndata['feat_fine'] = torch.cat((fine_h_B, torch.zeros((N,D)).to(self.device)), dim = 0)
+            A_pool.ndata['feat_coarse'] = torch.cat((torch.zeros((n,D)).to(self.device), coarse_h_A), dim = 0)
+            B_pool.ndata['feat_coarse'] = torch.cat((torch.zeros((n,D)).to(self.device), coarse_h_B), dim = 0)
 
             # if self.debug:
             #     log(torch.max(A_graph.ndata['x_now'].abs()), 'x_now : x_i at layer entrance')
