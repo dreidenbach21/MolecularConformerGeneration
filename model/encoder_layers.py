@@ -31,8 +31,7 @@ class Fine_Grain_Layer(nn.Module):
             x_connection_init,
             leakyrelu_neg_slope,
             debug,
-            device_A,
-            device_B,
+            device,
             dropout,
             save_trajectories=False,
             normalize_coordinate_update=False,
@@ -62,9 +61,7 @@ class Fine_Grain_Layer(nn.Module):
         self.loss_geometry_regularization = loss_geometry_regularization
 
         self.debug = debug
-        # self.device = device
-        self.device_A = device_A
-        self.device_B = device_B
+        self.device = device
         # self.A_evolve = A_evolve
         # self.B_evolve = B_evolve
         self.invar_feats_dim_h = invar_feats_dim_h
@@ -90,7 +87,7 @@ class Fine_Grain_Layer(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(self.out_feats_dim_h, self.out_feats_dim_h),
             get_layer_norm(layer_norm, self.out_feats_dim_h),
-        ).to(self.device_A)
+        )
 
         if self.weight_sharing:
             self.B_edge_mlp = self.A_edge_mlp
@@ -106,18 +103,18 @@ class Fine_Grain_Layer(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(self.out_feats_dim_h, self.out_feats_dim_h),
                 get_layer_norm(layer_norm, self.out_feats_dim_h),
-            ).to(self.device_B)
+            )
 
         # NODES
-        self.node_norm_A = nn.Identity().to(self.device_A) # nn.LayerNorm(invar_feats_dim_h)
-        self.node_norm_B = nn.Identity().to(self.device_B)
+        self.node_norm_A = nn.Identity() # nn.LayerNorm(invar_feats_dim_h)
+        self.node_norm_B = nn.Identity()
 
         if self.normalize_coordinate_update: # True
-            self.A_coords_norm = CoordsNorm(scale_init=1e-2).to(self.device_A)
+            self.A_coords_norm = CoordsNorm(scale_init=1e-2)
             if self.weight_sharing:
                 self.B_coords_norm = self.A_coords_norm
             else:
-                self.B_coords_norm = CoordsNorm(scale_init=1e-2).to(self.device_B)
+                self.B_coords_norm = CoordsNorm(scale_init=1e-2)
 
         self.att_mlp_Q_A = nn.Sequential(
             nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
@@ -142,10 +139,10 @@ class Fine_Grain_Layer(nn.Module):
         self.att_mlp_K_B = nn.Sequential(
             nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
             get_non_lin(nonlin, leakyrelu_neg_slope),
-        ).to(self.device_A)
+        )
         self.att_mlp_V_B = nn.Sequential(
             nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
-        ).to(self.device_A)
+        )
         # if self.standard_norm_order:
         self.node_mlp_A = nn.Sequential(
             nn.Linear(orig_invar_feats_dim_h + 2 * invar_feats_dim_h + self.out_feats_dim_h, invar_feats_dim_h),
@@ -154,7 +151,7 @@ class Fine_Grain_Layer(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(invar_feats_dim_h, out_feats_dim_h),
             get_layer_norm(layer_norm, out_feats_dim_h),
-        ).to(self.device_A)
+        )
         if self.weight_sharing:
             self.node_mlp_B = self.node_mlp_A
         else:
@@ -165,20 +162,20 @@ class Fine_Grain_Layer(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(invar_feats_dim_h, out_feats_dim_h),
                 get_layer_norm(layer_norm, out_feats_dim_h),
-            ).to(self.device_B)
+            )
 
-        self.final_h_layernorm_layer_A = get_norm(self.final_h_layer_norm, out_feats_dim_h).to(self.device_A)
-        self.pre_crossmsg_norm_A = get_norm(self.pre_crossmsg_norm_type, invar_feats_dim_h).to(self.device_A)
-        self.post_crossmsg_norm_A = get_norm(self.post_crossmsg_norm_type, invar_feats_dim_h).to(self.device_A)
+        self.final_h_layernorm_layer_A = get_norm(self.final_h_layer_norm, out_feats_dim_h)
+        self.pre_crossmsg_norm_A = get_norm(self.pre_crossmsg_norm_type, invar_feats_dim_h)
+        self.post_crossmsg_norm_A = get_norm(self.post_crossmsg_norm_type, invar_feats_dim_h)
         
         if self.weight_sharing:
             self.final_h_layernorm_layer_B = self.final_h_layernorm_layer_A
             self.pre_crossmsg_norm_B = self.pre_crossmsg_norm_A
             self.post_crossmsg_norm_B = self.post_crossmsg_norm_A
         else:
-            self.final_h_layernorm_layer_B = get_norm(self.final_h_layer_norm, out_feats_dim_h).to(self.device_B)
-            self.pre_crossmsg_norm_B = get_norm(self.pre_crossmsg_norm_type, invar_feats_dim_h).to(self.device_B)
-            self.post_crossmsg_norm_B = get_norm(self.post_crossmsg_norm_type, invar_feats_dim_h).to(self.device_B)
+            self.final_h_layernorm_layer_B = get_norm(self.final_h_layer_norm, out_feats_dim_h)
+            self.pre_crossmsg_norm_B = get_norm(self.pre_crossmsg_norm_type, invar_feats_dim_h)
+            self.post_crossmsg_norm_B = get_norm(self.post_crossmsg_norm_type, invar_feats_dim_h)
 
         # if self.standard_norm_order:
         self.coords_mlp_A = nn.Sequential(
@@ -187,7 +184,7 @@ class Fine_Grain_Layer(nn.Module):
             get_non_lin(nonlin, leakyrelu_neg_slope),
             nn.Dropout(dropout),
             nn.Linear(self.out_feats_dim_h, 1)
-        ).to(self.device_A)
+        )
         if self.weight_sharing:
             self.coords_mlp_B = self.coords_mlp_A
         else:
@@ -198,7 +195,7 @@ class Fine_Grain_Layer(nn.Module):
                 get_non_lin(nonlin, leakyrelu_neg_slope),
                 nn.Dropout(dropout),
                 nn.Linear(self.out_feats_dim_h, 1)
-            ).to(self.device_B)
+            )
         # self.reset_parameters()
         self.apply(self._init_weights)
         
@@ -276,7 +273,7 @@ class Fine_Grain_Layer(nn.Module):
                     'data[msg] = m_{i->j} = phi^e(h_i, h_j, f_{i,j}, x_rel_mag_ligand)')
 
             h_feats_A_norm = apply_norm(A_graph, h_feats_A, self.final_h_layer_norm, self.final_h_layernorm_layer_A)
-            h_feats_B_norm = apply_norm(B_graph, h_feats_B, self.final_h_layer_norm, self.final_h_layernorm_layer_B).to(self.device_A)
+            h_feats_B_norm = apply_norm(B_graph, h_feats_B, self.final_h_layer_norm, self.final_h_layernorm_layer_B)
             
             cross_attention_A_feat = cross_attention(self.att_mlp_Q_A(h_feats_A_norm),
                                                        self.att_mlp_K_B(h_feats_B_norm),
@@ -285,7 +282,7 @@ class Fine_Grain_Layer(nn.Module):
             #                                            self.att_mlp_K_A(h_feats_A_norm),
             #                                            self.att_mlp_V_A(h_feats_A_norm), mask.transpose(0, 1),
             #                                            self.cross_msgs)
-            cross_attention_B_feat = (0*cross_attention_A_feat).to(self.device_B)
+            cross_attention_B_feat = (0*cross_attention_A_feat)
             cross_attention_A_feat = apply_norm(A_graph, cross_attention_A_feat, self.final_h_layer_norm, self.final_h_layernorm_layer_A)
             # cross_attention_B_feat = apply_norm(B_graph, cross_attention_B_feat, self.final_h_layer_norm, self.final_h_layernorm_layer_B)
             # Equation 2: mu terms for all to all attention
@@ -433,8 +430,7 @@ class Pooling_3D_Layer(nn.Module):
             x_connection_init,
             leakyrelu_neg_slope,
             debug,
-            device_A,
-            device_B,
+            device,
             dropout,
             save_trajectories=False,
             normalize_coordinate_update=False,
@@ -457,8 +453,7 @@ class Pooling_3D_Layer(nn.Module):
         self.x_connection_init = x_connection_init
         self.norm_cross_coords_update =norm_cross_coords_update
         self.debug = debug
-        self.device_A = device_A
-        self.device_B = device_B
+        self.device = device
         self.invar_feats_dim_h = invar_feats_dim_h
         self.out_feats_dim_h = out_feats_dim_h
         # self.standard_norm_order = standard_norm_order
@@ -486,7 +481,7 @@ class Pooling_3D_Layer(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(self.out_feats_dim_h, self.out_feats_dim_h),
             get_layer_norm(layer_norm, self.out_feats_dim_h),
-        ).to(self.device_A)
+        )
 
         if self.weight_sharing:
             self.B_edge_mlp = self.A_edge_mlp
@@ -502,18 +497,18 @@ class Pooling_3D_Layer(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(self.out_feats_dim_h, self.out_feats_dim_h),
                 get_layer_norm(layer_norm, self.out_feats_dim_h),
-            ).to(self.device_B)
+            )
 
         # NODES
-        self.node_norm_A = nn.Identity().to(self.device_A)# nn.LayerNorm(invar_feats_dim_h)
-        self.node_norm_B = nn.Identity().to(self.device_B)
+        self.node_norm_A = nn.Identity()# nn.LayerNorm(invar_feats_dim_h)
+        self.node_norm_B = nn.Identity()
 
         if self.normalize_coordinate_update: # True
-            self.A_coords_norm = CoordsNorm(scale_init=1e-2).to(self.device_A)
+            self.A_coords_norm = CoordsNorm(scale_init=1e-2)
             if self.weight_sharing:
                 self.B_coords_norm = self.A_coords_norm
             else:
-                self.B_coords_norm = CoordsNorm(scale_init=1e-2).to(self.device_B)
+                self.B_coords_norm = CoordsNorm(scale_init=1e-2)
 
         self.node_mlp_A = nn.Sequential(
             nn.Linear(invar_feats_dim_h + self.out_feats_dim_h, invar_feats_dim_h), #orig_invar_feats_dim_h + 2*
@@ -522,7 +517,7 @@ class Pooling_3D_Layer(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(invar_feats_dim_h, out_feats_dim_h),
             get_layer_norm(layer_norm, out_feats_dim_h),
-        ).to(self.device_A)
+        )
         if self.weight_sharing:
             self.node_mlp_B = self.node_mlp_A
         else:
@@ -533,20 +528,20 @@ class Pooling_3D_Layer(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(invar_feats_dim_h, out_feats_dim_h),
                 get_layer_norm(layer_norm, out_feats_dim_h),
-            ).to(self.device_B)
+            )
 
-        self.final_h_layernorm_layer_A = get_norm(self.final_h_layer_norm, out_feats_dim_h).to(self.device_A)
-        self.pre_crossmsg_norm_A = get_norm(self.pre_crossmsg_norm_type, invar_feats_dim_h).to(self.device_A)
-        self.post_crossmsg_norm_A = get_norm(self.post_crossmsg_norm_type, invar_feats_dim_h).to(self.device_A)
+        self.final_h_layernorm_layer_A = get_norm(self.final_h_layer_norm, out_feats_dim_h)
+        self.pre_crossmsg_norm_A = get_norm(self.pre_crossmsg_norm_type, invar_feats_dim_h)
+        self.post_crossmsg_norm_A = get_norm(self.post_crossmsg_norm_type, invar_feats_dim_h)
         
         if self.weight_sharing:
             self.final_h_layernorm_layer_B = self.final_h_layernorm_layer_A
             self.pre_crossmsg_norm_B = self.pre_crossmsg_norm_A
             self.post_crossmsg_norm_B = self.post_crossmsg_norm_A
         else:
-            self.final_h_layernorm_layer_B = get_norm(self.final_h_layer_norm, out_feats_dim_h).to(self.device_B)
-            self.pre_crossmsg_norm_B = get_norm(self.pre_crossmsg_norm_type, invar_feats_dim_h).to(self.device_B)
-            self.post_crossmsg_norm_B = get_norm(self.post_crossmsg_norm_type, invar_feats_dim_h).to(self.device_B)
+            self.final_h_layernorm_layer_B = get_norm(self.final_h_layer_norm, out_feats_dim_h)
+            self.pre_crossmsg_norm_B = get_norm(self.pre_crossmsg_norm_type, invar_feats_dim_h)
+            self.post_crossmsg_norm_B = get_norm(self.post_crossmsg_norm_type, invar_feats_dim_h)
 
         # if self.standard_norm_order:
         self.coords_mlp_A = nn.Sequential(
@@ -555,7 +550,7 @@ class Pooling_3D_Layer(nn.Module):
             get_non_lin(nonlin, leakyrelu_neg_slope),
             nn.Dropout(dropout),
             nn.Linear(self.out_feats_dim_h, 1)
-        ).to(self.device_A)
+        )
         if self.weight_sharing:
             self.coords_mlp_B = self.coords_mlp_A
         else:
@@ -565,7 +560,7 @@ class Pooling_3D_Layer(nn.Module):
                 get_non_lin(nonlin, leakyrelu_neg_slope),
                 nn.Dropout(dropout),
                 nn.Linear(self.out_feats_dim_h, 1)
-            ).to(self.device_B)
+            )
         self.apply(self._init_weights)
 
     def _init_weights(self, module):
@@ -634,17 +629,17 @@ class Pooling_3D_Layer(nn.Module):
             n = fine_x_A.shape[0]
             D = fine_h_A.shape[1]
             # pooling graph has n + N nodes
-            A_pool.ndata['x_fine'] = torch.cat((fine_x_A, torch.zeros((N,3)).to(self.device_A)), dim = 0)
-            B_pool.ndata['x_fine'] = torch.cat((fine_x_B, torch.zeros((N,3)).to(self.device_B)), dim = 0)
+            A_pool.ndata['x_fine'] = torch.cat((fine_x_A, torch.zeros((N,3))), dim = 0).to(self.device)
+            B_pool.ndata['x_fine'] = torch.cat((fine_x_B, torch.zeros((N,3))), dim = 0).to(self.device)
             coarse_x_A = pool_x_A[-N:,:] #! due to painn we use the current coordinates for the message passing
             coarse_x_B = pool_x_B[-N:,:]
-            A_pool.ndata['x_coarse'] = torch.cat((torch.zeros((n,3)).to(self.device_A), coarse_x_A), dim = 0)
-            B_pool.ndata['x_coarse'] = torch.cat((torch.zeros((n,3)).to(self.device_B), coarse_x_B), dim = 0)
+            A_pool.ndata['x_coarse'] = torch.cat((torch.zeros((n,3)), coarse_x_A), dim = 0).to(self.device)
+            B_pool.ndata['x_coarse'] = torch.cat((torch.zeros((n,3)), coarse_x_B), dim = 0).to(self.device)
 
-            A_pool.ndata['feat_fine'] = torch.cat((fine_h_A, torch.zeros((N,D)).to(self.device_A)), dim = 0)
-            B_pool.ndata['feat_fine'] = torch.cat((fine_h_B, torch.zeros((N,D)).to(self.device_B)), dim = 0)
-            A_pool.ndata['feat_coarse'] = torch.cat((torch.zeros((n,D)).to(self.device_A), coarse_h_A), dim = 0)
-            B_pool.ndata['feat_coarse'] = torch.cat((torch.zeros((n,D)).to(self.device_B), coarse_h_B), dim = 0)
+            A_pool.ndata['feat_fine'] = torch.cat((fine_h_A, torch.zeros((N,D))), dim = 0).to(self.device)
+            B_pool.ndata['feat_fine'] = torch.cat((fine_h_B, torch.zeros((N,D))), dim = 0).to(self.device)
+            A_pool.ndata['feat_coarse'] = torch.cat((torch.zeros((n,D)), coarse_h_A), dim = 0).to(self.device)
+            B_pool.ndata['feat_coarse'] = torch.cat((torch.zeros((n,D)), coarse_h_B), dim = 0).to(self.device)
 
             # if self.debug:
             #     log(torch.max(A_graph.ndata['x_now'].abs()), 'x_now : x_i at layer entrance')
@@ -776,8 +771,7 @@ class Coarse_Grain_3DLayer(nn.Module):
             x_connection_init,
             leakyrelu_neg_slope,
             debug,
-            device_A,
-            device_B,
+            device,
             dropout,
             save_trajectories=False,
             normalize_coordinate_update=False,
@@ -806,52 +800,51 @@ class Coarse_Grain_3DLayer(nn.Module):
         self.weight_sharing = weight_sharing
         self.skip_weight_h = max(skip_weight_h, 0.9) # TODO think about these values for the update. Equibind used 0.5 but did not do anu coarse. CGVAE uses 1.0
         self.skip_weight_v = skip_weight_v
-        self.device_A = device_A
-        self.device_B = device_B
+        self.device = device
 
-        self.A_rbf_k = nn.Parameter(torch.rand(1)).to(self.device_A)
-        self.A_rbf_1 = nn.Linear(self.num_rbf, self.D).to(self.device_A) #nn.Parameter(glorot_init([self.num_rbf, D]))
-        self.A_rbf_2 = nn.Linear(self.num_rbf, self.F).to(self.device_A) #nn.Parameter(glorot_init([self.num_rbf, F]))
-        self.A_rbf_3 = nn.Linear(self.num_rbf,self. F).to(self.device_A) #nn.Parameter(glorot_init([self.num_rbf, F]))
+        self.A_rbf_k = nn.Parameter(torch.rand(1))
+        self.A_rbf_1 = nn.Linear(self.num_rbf, self.D) #nn.Parameter(glorot_init([self.num_rbf, D]))
+        self.A_rbf_2 = nn.Linear(self.num_rbf, self.F) #nn.Parameter(glorot_init([self.num_rbf, F]))
+        self.A_rbf_3 = nn.Linear(self.num_rbf,self. F) #nn.Parameter(glorot_init([self.num_rbf, F]))
         if self.weight_sharing:
             self.B_rbf_k = self.A_rbf_k
             self.B_rbf_1 = self.A_rbf_1
             self.B_rbf_2 = self.A_rbf_2 
             self.B_rbf_3 = self.A_rbf_3
         else:
-            self.B_rbf_k = nn.Parameter(torch.rand(1)).to(self.device_B)
-            self.B_rbf_1 = nn.Linear(self.num_rbf, self.D).to(self.device_B) #nn.Parameter(glorot_init([self.num_rbf, D]))
-            self.B_rbf_2 = nn.Linear(self.num_rbf, self.F).to(self.device_B)#nn.Parameter(glorot_init([self.num_rbf, F]))
-            self.B_rbf_3 = nn.Linear(self.num_rbf, self.F).to(self.device_B) #nn.Parameter(glorot_init([self.num_rbf, F]))
+            self.B_rbf_k = nn.Parameter(torch.rand(1))
+            self.B_rbf_1 = nn.Linear(self.num_rbf, self.D) #nn.Parameter(glorot_init([self.num_rbf, D]))
+            self.B_rbf_2 = nn.Linear(self.num_rbf, self.F)#nn.Parameter(glorot_init([self.num_rbf, F]))
+            self.B_rbf_3 = nn.Linear(self.num_rbf, self.F) #nn.Parameter(glorot_init([self.num_rbf, F]))
 # ! change types of VN architecture
-        self.A_vn_mlp_1 = VNLinear(self.F,self.F).to(self.device_A)
-        self.A_vn_mlp_2 = VNLinear(self.F,self.F).to(self.device_A)
-        self.A_vn_mlp_3 = VNLinear(self.F,self.F).to(self.device_A)
+        self.A_vn_mlp_1 = VNLinear(self.F,self.F)
+        self.A_vn_mlp_2 = VNLinear(self.F,self.F)
+        self.A_vn_mlp_3 = VNLinear(self.F,self.F)
         # self.A_vn_mlp_4 = Vector_MLP(2*self.F,2*self.F, 2*self.F, self.F)
-        self.A_vn_mlp_4 = VN_MLP(2*self.F, self.F, self.F, self.F).to(self.device_A)
+        self.A_vn_mlp_4 = VN_MLP(2*self.F, self.F, self.F, self.F)
         if self.weight_sharing:
             self.B_vn_mlp_1 = self.A_vn_mlp_1
             self.B_vn_mlp_2 = self.A_vn_mlp_2
             self.B_vn_mlp_3 = self.A_vn_mlp_3
             self.B_vn_mlp_4 = self.A_vn_mlp_4
         else:
-            self.B_vn_mlp_1 = VNLinear(self.F,self.F).to(self.device_B)
-            self.B_vn_mlp_2 = VNLinear(self.F,self.F).to(self.device_B)
-            self.B_vn_mlp_3 = VNLinear(self.F,self.F).to(self.device_B)
+            self.B_vn_mlp_1 = VNLinear(self.F,self.F)
+            self.B_vn_mlp_2 = VNLinear(self.F,self.F)
+            self.B_vn_mlp_3 = VNLinear(self.F,self.F)
             # self.B_vn_mlp_4 = Vector_MLP(2*self.F,2*self.F, 2*self.F, self.F)
-            self.B_vn_mlp_4 = VN_MLP(2*self.F, self.F, self.F, self.F).to(self.device_B)
+            self.B_vn_mlp_4 = VN_MLP(2*self.F, self.F, self.F, self.F)
 
-        self.A_phi_1 = Scalar_Linear(self.F + self.D, self.D).to(self.device_A)
-        self.A_phi_2 = Scalar_Linear(self.F + self.D, self.F).to(self.device_A)
-        self.A_phi_3 = Scalar_Linear(self.D, self.F).to(self.device_A)
+        self.A_phi_1 = Scalar_Linear(self.F + self.D, self.D)
+        self.A_phi_2 = Scalar_Linear(self.F + self.D, self.F)
+        self.A_phi_3 = Scalar_Linear(self.D, self.F)
         if self.weight_sharing:
             self.B_phi_1 = self.A_phi_1
             self.B_phi_2 = self.A_phi_2
             self.B_phi_3 = self.A_phi_3
         else:
-            self.B_phi_1 = Scalar_Linear(self.F + self.D, self.D).to(self.device_B)
-            self.B_phi_2 = Scalar_Linear(self.F + self.D, self.F).to(self.device_B)
-            self.B_phi_3 = Scalar_Linear(self.D, self.F).to(self.device_B)
+            self.B_phi_1 = Scalar_Linear(self.F + self.D, self.D)
+            self.B_phi_2 = Scalar_Linear(self.F + self.D, self.F)
+            self.B_phi_3 = Scalar_Linear(self.D, self.F)
 
         # self.A_h_update = torch.nn.GRUCell(self.D, 2*self.D)
         # self.B_h_update = torch.nn.GRUCell(self.D, 2*self.D)
@@ -862,7 +855,7 @@ class Coarse_Grain_3DLayer(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(3*self.D, self.D),
             get_layer_norm(layer_norm, self.D),
-        ).to(self.device_A)
+        )
         if self.weight_sharing:
             self.B_h_update = self.A_h_update
         else:
@@ -873,7 +866,7 @@ class Coarse_Grain_3DLayer(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(3*self.D, self.D),
                 get_layer_norm(layer_norm, self.D),
-            ).to(self.device_B)
+            )
 
 
 
@@ -896,26 +889,26 @@ class Coarse_Grain_3DLayer(nn.Module):
         self.save_trajectories = save_trajectories
         
 
-        self.node_norm_A = nn.Identity().to(self.device_A)  # nn.LayerNorm(invar_feats_dim_h)
-        self.node_norm_B = nn.Identity().to(self.device_B)
+        self.node_norm_A = nn.Identity()  # nn.LayerNorm(invar_feats_dim_h)
+        self.node_norm_B = nn.Identity()
 
         self.att_mlp_Q_A = nn.Sequential(
             nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
             get_non_lin(nonlin, leakyrelu_neg_slope),
-        ).to(self.device_A)
+        )
         self.att_mlp_K_B = nn.Sequential(
             nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
             get_non_lin(nonlin, leakyrelu_neg_slope),
-        ).to(self.device_A)
+        )
         self.att_mlp_V_B = nn.Sequential(
             nn.Linear(invar_feats_dim_h, invar_feats_dim_h, bias=False),
-        ).to(self.device_A)
-        self.final_h_layernorm_layer_A = get_norm(self.final_h_layer_norm, out_feats_dim_h).to(self.device_A)
+        )
+        self.final_h_layernorm_layer_A = get_norm(self.final_h_layer_norm, out_feats_dim_h)
         
         if self.weight_sharing:
             self.final_h_layernorm_layer_B = self.final_h_layernorm_layer_A
         else:
-            self.final_h_layernorm_layer_B = get_norm(self.final_h_layer_norm, out_feats_dim_h).to(self.device_B)
+            self.final_h_layernorm_layer_B = get_norm(self.final_h_layer_norm, out_feats_dim_h)
         # self.reset_parameters()
         self.apply(self._init_weights)
         
@@ -968,7 +961,7 @@ class Coarse_Grain_3DLayer(nn.Module):
 
     def point_convolution_A(self, edges):
         # ipdb.set_trace()
-        rbf = torch.linspace(0, self.max_correlation_length, self.num_rbf, device=self.device_A)
+        rbf = torch.linspace(0, self.max_correlation_length, self.num_rbf, device=self.device)
         r_ij = edges.data['r_ij'] # edges x 3
         r_ij_norm = torch.linalg.norm(r_ij, dim=1).unsqueeze(1) # edges x 1
         rbf = torch.exp(-torch.square(torch.tile(r_ij_norm, [1, self.num_rbf]) - rbf) * self.A_rbf_k) # edges x num_rbf
@@ -994,7 +987,7 @@ class Coarse_Grain_3DLayer(nn.Module):
 
     def point_convolution_B(self, edges):
         # ipdb.set_trace()
-        rbf = torch.linspace(0, self.max_correlation_length, self.num_rbf, device=self.device_B)
+        rbf = torch.linspace(0, self.max_correlation_length, self.num_rbf, device=self.device)
         r_ij = edges.data['r_ij'] # edges x 3
         r_ij_norm = torch.linalg.norm(r_ij, dim=1).unsqueeze(1) # edges x 1
         rbf = torch.exp(-torch.square(torch.tile(r_ij_norm, [1, self.num_rbf]) - rbf) * self.A_rbf_k) # edges x num_rbf
@@ -1060,7 +1053,7 @@ class Coarse_Grain_3DLayer(nn.Module):
                                                        self.att_mlp_K_B(h_feats_B_norm),
                                                        self.att_mlp_V_B(h_feats_B_norm), mask, self.cross_msgs)
 
-            cross_attention_B_feat = (0*cross_attention_A_feat).to(self.device_B)
+            cross_attention_B_feat = (0*cross_attention_A_feat)
             cross_attention_A_feat = apply_norm(A_graph, cross_attention_A_feat, self.final_h_layer_norm, self.final_h_layernorm_layer_A)
 
             A_graph.apply_nodes(self.generate_mixed_features_A) # use the pooling feats

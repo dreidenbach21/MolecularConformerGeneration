@@ -582,21 +582,22 @@ class BenchmarkRunner():
                 
         self.results = results
         random.shuffle(jobs)
-        # if self.n_workers > 1:
-        #     p = Pool(self.n_workers)
-        #     map_fn = p.imap_unordered
-        #     p.__enter__()
-        # else:
-        #     map_fn = map
-        # self.final_confs_temp = final_confs
-        # for res in tqdm(map_fn(self.worker_fn, jobs), total=len(jobs)):
-        #     self.populate_results(res)
-
-        # if self.n_workers > 1:
-        #     p.__exit__(None, None, None)
+        if self.n_workers > 1:
+            p = Pool(self.n_workers)
+            map_fn = p.imap_unordered
+            p.__enter__()
+        else:
+            map_fn = map
         self.final_confs_temp = final_confs
-        for job in tqdm(jobs, total=len(jobs)):
-            self.populate_results(self.worker_fn(job))
+        for res in tqdm(map_fn(self.worker_fn, jobs), total=len(jobs)):
+            self.populate_results(res)
+
+        if self.n_workers > 1:
+            p.__exit__(None, None, None)
+        # ! previous code that worked below
+        # self.final_confs_temp = final_confs
+        # for job in tqdm(jobs, total=len(jobs)):
+        #     self.populate_results(self.worker_fn(job))
         self.run(results, reduction='min', use_wandb = use_wandb)
         self.run(results, reduction='max', use_wandb = use_wandb)
         self.run(results, reduction='mean', use_wandb = use_wandb)

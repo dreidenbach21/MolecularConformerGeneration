@@ -15,7 +15,7 @@ from utils.model_utils import *
 from encoder_layers import *
 
 class Encoder(nn.Module):#ECN3D(nn.Module):
-    def __init__(self, n_lays, debug, device_A, device_B, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
+    def __init__(self, n_lays, debug, device, shared_layers, noise_decay_rate, cross_msgs, noise_initial,
                  use_edge_features_in_gmn, use_mean_node_features, atom_emb_dim, latent_dim,coord_F_dim,
                  dropout, nonlin, leakyrelu_neg_slope, feature_dims = 45, random_vec_dim=0, random_vec_std=1, use_scalar_features=True,
                  save_trajectories=False, weight_sharing = True, conditional_mask=False, 
@@ -24,8 +24,7 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
         super(Encoder, self).__init__()
         self.debug = debug
         self.cross_msgs = cross_msgs
-        self.device_A = device_A
-        self.device_B = device_B
+        self.device = device
         self.save_trajectories = save_trajectories
         self.noise_decay_rate = noise_decay_rate
         self.noise_initial = noise_initial
@@ -39,7 +38,7 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
                                             #  feature_dims=feature_dims, use_scalar_feat=use_scalar_features,
                                             #  n_feats_to_use=num_A_feats)
         # ! Switched from EquiBind Encoding to MLP of Torsional Diffusion
-        self.atom_embedder = AtomEncoderTorsionalDiffusion(emb_dim=atom_emb_dim - self.random_vec_dim, feature_dim = feature_dims).to(self.device_A) #qm9 45
+        self.atom_embedder = AtomEncoderTorsionalDiffusion(emb_dim=atom_emb_dim - self.random_vec_dim, feature_dim = feature_dims) #qm9 45
         # self.atom_embedder = AtomEncoderTorsionalDiffusion(emb_dim=atom_emb_dim - self.random_vec_dim, feature_dim = 75) #drugs
 
         input_node_feats_dim = atom_emb_dim #64
@@ -61,8 +60,7 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
                         cross_msgs=self.cross_msgs,
                         leakyrelu_neg_slope=leakyrelu_neg_slope,
                         debug=debug,
-                        device_A=device_A,
-                        device_B=device_B,
+                        device=device,
                         dropout=dropout,
                         save_trajectories=save_trajectories,
                         weight_sharing = self.weight_sharing, **kwargs))
@@ -76,8 +74,7 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
                                      nonlin=nonlin,
                                      leakyrelu_neg_slope=leakyrelu_neg_slope,
                                      debug=debug,
-                                     device_A=device_A,
-                                     device_B=device_B,
+                                     device=device,
                                      dropout=dropout,
                                      save_trajectories=save_trajectories,
                                      weight_sharing = self.weight_sharing, **kwargs)
@@ -95,8 +92,7 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
                                 nonlin=nonlin,
                                 leakyrelu_neg_slope=leakyrelu_neg_slope,
                                 debug=debug_this_layer,
-                                device_A=device_A,
-                                device_B=device_B,
+                                device=device,
                                 dropout=dropout,
                                 save_trajectories=save_trajectories,
                                 weight_sharing = self.weight_sharing, **kwargs))
@@ -111,8 +107,7 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
                         cross_msgs=self.cross_msgs,
                         leakyrelu_neg_slope=leakyrelu_neg_slope,
                         debug=debug,
-                        device_A=device_A,
-                        device_B=device_B,
+                        device=device,
                         dropout=dropout,
                         save_trajectories=save_trajectories,
                         weight_sharing = self.weight_sharing, **kwargs))
@@ -124,8 +119,7 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
                                      nonlin=nonlin,
                                      leakyrelu_neg_slope=leakyrelu_neg_slope,
                                      debug=debug,
-                                     device_A=device_A,
-                                     device_B=device_B,
+                                     device=device,
                                      dropout=dropout,
                                      save_trajectories=save_trajectories,
                                      weight_sharing = self.weight_sharing, **kwargs)
@@ -142,8 +136,7 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
                                 nonlin=nonlin,
                                 leakyrelu_neg_slope=leakyrelu_neg_slope,
                                 debug=debug_this_layer,
-                                device_A=device_A,
-                                device_B=device_B,
+                                device=device,
                                 dropout=dropout,
                                 save_trajectories=save_trajectories,
                                 weight_sharing = self.weight_sharing, **kwargs))
@@ -157,8 +150,7 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
                         cross_msgs=self.cross_msgs,
                         leakyrelu_neg_slope=leakyrelu_neg_slope,
                         debug=debug,
-                        device_A=device_A,
-                        device_B=device_B,
+                        device=device,
                         dropout=dropout,
                         save_trajectories=save_trajectories,
                         weight_sharing = self.weight_sharing, **kwargs))
@@ -170,8 +162,7 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
                                      nonlin=nonlin,
                                      leakyrelu_neg_slope=leakyrelu_neg_slope,
                                      debug=debug,
-                                     device_A=device_A,
-                                     device_B=device_B,
+                                     device=device,
                                      dropout=dropout,
                                      save_trajectories=save_trajectories,
                                      weight_sharing = self.weight_sharing, **kwargs)
@@ -187,8 +178,7 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
                                 nonlin=nonlin,
                                 leakyrelu_neg_slope=leakyrelu_neg_slope,
                                 debug=debug_this_layer,
-                                device_A=device_A,
-                                device_B=device_B,
+                                device=device,
                                 dropout=dropout,
                                 save_trajectories=save_trajectories,
                                 weight_sharing = self.weight_sharing, **kwargs))
@@ -216,7 +206,7 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
         # print("EMB CHECK", next(self.atom_embedder.parameters()).is_cuda)
         # print(A_graph.ndata['feat'].device)
         h_feats_A = self.atom_embedder(A_graph.ndata['feat'])
-        h_feats_B = self.atom_embedder(B_graph.ndata['feat'].to(self.device_A)).to(self.device_B)
+        h_feats_B = self.atom_embedder(B_graph.ndata['feat'])
 
         coords_A_pool = A_pool.ndata['x']
         coords_B_pool = B_pool.ndata['x']
@@ -231,8 +221,8 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
         h_feats_B_cg = B_cg.ndata['feat']
 
         rand_dist = torch.distributions.normal.Normal(loc=0, scale=self.random_vec_std)
-        rand_h_A = rand_dist.sample([h_feats_A.size(0), self.random_vec_dim]).to(self.device_A)
-        rand_h_B = rand_dist.sample([h_feats_B.size(0), self.random_vec_dim]).to(self.device_B)
+        rand_h_A = rand_dist.sample([h_feats_A.size(0), self.random_vec_dim]).to(self.device)
+        rand_h_B = rand_dist.sample([h_feats_B.size(0), self.random_vec_dim]).to(self.device)
         h_feats_A = torch.cat([h_feats_A, rand_h_A], dim=1)
         h_feats_B = torch.cat([h_feats_B, rand_h_B], dim=1)
 
@@ -257,8 +247,8 @@ class Encoder(nn.Module):#ECN3D(nn.Module):
         A_cg.edata['feat'] *= self.use_edge_features_in_gmn
         B_cg.edata['feat'] *= self.use_edge_features_in_gmn
 
-        fine_mask = get_mask(A_graph.batch_num_nodes(), B_graph.batch_num_nodes(), self.device_A)
-        coarse_mask = get_mask(A_cg.batch_num_nodes(), B_cg.batch_num_nodes(), self.device_A)
+        fine_mask = get_mask(A_graph.batch_num_nodes(), B_graph.batch_num_nodes(), self.device)
+        coarse_mask = get_mask(A_cg.batch_num_nodes(), B_cg.batch_num_nodes(), self.device)
         # print("Coarse Mask", coarse_mask)
 
         # full_trajectory = [coords_A.detach().cpu()]

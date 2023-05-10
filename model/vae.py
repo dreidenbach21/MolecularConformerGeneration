@@ -2,14 +2,13 @@ from encoder import *
 from decoder import *
 
 class VAE(nn.Module):
-    def __init__(self, kl_params, encoder_params, decoder_params, loss_params, coordinate_type):
+    def __init__(self, kl_params, encoder_params, decoder_params, loss_params, coordinate_type, device = "cuda"):
         super(VAE, self).__init__()
         self.encoder = Encoder(**encoder_params) #.to(device)
         self.decoder = Decoder(self.encoder.atom_embedder, coordinate_type, **decoder_params) #.to(device)
         self.mse = nn.MSELoss()
         self.mse_none = nn.MSELoss(reduction ='none')
-        self.device_A = encoder_params['device_A']
-        self.device_B = encoder_params['device_B']
+        self.device = device
         F = encoder_params["coord_F_dim"]
         D = encoder_params["latent_dim"]
         
@@ -54,8 +53,8 @@ class VAE(nn.Module):
         # print("[ENC] encoder output geom loss adn geom cg loss", geom_losses, geom_loss_cg)
         natoms = A_graph.batch_num_nodes()
         nbeads = A_cg.batch_num_nodes()
-        kl_v, kl_v_un_clamped = torch.tensor([0]).to(self.device_A), torch.tensor([0]).to(self.device_A)
-        mim = torch.tensor([0]).to(self.device_A)
+        kl_v, kl_v_un_clamped = torch.tensor([0]).to(results["prior_mean_V"].device), torch.tensor([0]).to(results["prior_mean_V"].device)
+        mim = torch.tensor([0]).to(results["prior_mean_V"].device)
         if not validation:
             kl_v, kl_v_un_clamped = self.kl(results["posterior_mean_V"], results["posterior_logvar_V"], results["prior_mean_V"], results["prior_logvar_V"], natoms, nbeads, coordinates = True)
             # kl_v2, kl_v_un_clamped2 = self.kl_built_in(results["posterior_mean_V"], results["posterior_logvar_V"], results["prior_mean_V"], results["prior_logvar_V"], natoms, nbeads, coordinates = True)
