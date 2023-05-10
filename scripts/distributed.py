@@ -32,9 +32,11 @@ def init_model(cfg, seed, device):
     return model
 
 def init_process_group(world_size, rank):
+    # Generate a random port number
+    port = random.randint(10000, 20000)
     dist.init_process_group(
         backend='nccl',
-        init_method='tcp://127.0.0.1:12345',
+        init_method=f'tcp://127.0.0.1:{port}',
         world_size=world_size,
         rank=rank)
 
@@ -91,8 +93,8 @@ def run(cfg, rank, world_size, train_dataset, val_dataset, seed=0):
 
     train_loader = get_dataloader(train_dataset,seed)
     val_loader = get_dataloader(train_dataset,seed)
-    
-    print("CUDA CHECK", next(model.parameters()).is_cuda)
+    NAME = wandb_run.name
+    print("CUDA CHECK", NAME, next(model.parameters()).is_cuda)
     # print("# of Encoder Params = ", sum(p.numel()
     #       for p in model.encoder.parameters() if p.requires_grad))
     # print("# of Decoder Params = ", sum(p.numel()
@@ -124,7 +126,7 @@ def run(cfg, rank, world_size, train_dataset, val_dataset, seed=0):
     kl_cap = 1e-1
     
     dist_weight = 1e-6
-    dist_annealing_rate = 0.05
+    dist_annealing_rate = 0.1
     dist_cap = 0.5
     for epoch in range(cfg.data['epochs']):
         print("Epoch", epoch)
