@@ -31,9 +31,9 @@ def init_model(cfg, seed, device):
     model = DistributedDataParallel(model, device_ids=[device], output_device=device)
     return model
 
-def init_process_group(world_size, rank):
+def init_process_group(world_size, rank, port):
     # Generate a random port number
-    port = random.randint(10000, 20000)
+    print("INIT Process", world_size, rank, port)
     dist.init_process_group(
         backend='nccl',
         init_method=f'tcp://127.0.0.1:{port}',
@@ -81,10 +81,11 @@ def get_dataloader(dataset, seed, batch_size=300, num_workers=1, mode = 'train')
         use_ddp = False
     dataloader = dgl.dataloading.GraphDataLoader(dataset, use_ddp=use_ddp, batch_size=batch_size,
                                                  shuffle=True, drop_last=False, num_workers=num_workers, collate_fn = collate)
+    print("Data Loader", mode)
     return dataloader
 
-def run(cfg, rank, world_size, train_dataset, val_dataset, seed=0):
-    init_process_group(world_size, rank)
+def run(cfg, port, rank, world_size, train_dataset, val_dataset, seed=0):
+    init_process_group(world_size, rank, port)
     # Assume the GPU ID to be the same as the process ID
     device = torch.device('cuda:{:d}'.format(rank))
     torch.cuda.set_device(device)
@@ -231,12 +232,13 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
         config = cfg,
         save_code = True
     )
-    num_gpus = 4
+    num_gpus = 15
     procs = []
     train_dataset = load_data(mode = 'train')
     val_dataset = load_data(mode = 'val')
+    port = random.randint(10000, 20000)
     for rank in range(num_gpus):
-        p = mp.Process(target=run, args=(cfg, rank, num_gpus, train_dataset, val_dataset))
+        p = mp.Process(target=run, args=(cfg, port, rank, num_gpus, train_dataset, val_dataset))
         p.start()
         procs.append(p)
     for p in procs:
