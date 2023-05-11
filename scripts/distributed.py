@@ -83,16 +83,6 @@ def get_dataloader(dataset, seed, batch_size=300, num_workers=1, mode = 'train')
     print("Data Loader", mode)
     return dataloader
 
-def get_contributing_params(y, top_level=True):
-    nf = y.grad_fn.next_functions if top_level else y.next_functions
-    for f, _ in nf:
-        try:
-            yield f.variable
-        except AttributeError:
-            pass  # node has no tensor
-        if f is not None:
-            yield from get_contributing_params(f, top_level=False)
-
 def run(cfg, name, port, rank, world_size, train_dataset, val_dataset, seed=0):
     init_process_group(world_size, rank, port)
     # Assume the GPU ID to be the same as the process ID
@@ -166,11 +156,6 @@ def run(cfg, name, port, rank, world_size, train_dataset, val_dataset, seed=0):
                 device), Bp.to(device), B_cg.to(device), geo_B_cg.to(device)
             print("forward", rank, count)
             generated_molecule = model(rank, frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg)
-            
-            contributing_parameters = set(get_contributing_params(generated_molecule))
-            all_parameters = set(model.parameters())
-            non_contributing = all_parameters - contributing_parameters
-            print(non_contributing)
             
             loss, losses = model.module.loss_function(generated_molecule, rank, geo_A)
             print(f"Train LOSS = {loss}")
