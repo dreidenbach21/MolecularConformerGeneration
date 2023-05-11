@@ -8,7 +8,7 @@ import wandb
 import random
 import logging
 from utils.torsional_diffusion_data_all import * 
-from model.vae import VAE
+from model.parallel_vae import VAE
 import datetime
 from model.benchmarker import *
 import glob
@@ -28,7 +28,7 @@ drugs_types = {'H': 0, 'Li': 1, 'B': 2, 'C': 3, 'N': 4, 'O': 5, 'F': 6, 'Na': 7,
 def init_model(cfg, seed, device):
     torch.manual_seed(seed)
     model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, coordinate_type = cfg.coordinates, device = device).to(device)
-    model = DistributedDataParallel(model, device_ids=[device], output_device=device)
+    model = DistributedDataParallel(model, device_ids=[device], output_device=device) #, find_unused_parameters=True)
     return model
 
 def init_process_group(world_size, rank, port):
@@ -84,7 +84,7 @@ def get_dataloader(dataset, seed, batch_size=300, num_workers=1, mode = 'train')
     print("Data Loader", mode)
     return dataloader
 
-def run(cfg, port, rank, world_size, train_dataset, val_dataset, seed=0):
+def run(cfg, name, port, rank, world_size, train_dataset, val_dataset, seed=0):
     init_process_group(world_size, rank, port)
     # Assume the GPU ID to be the same as the process ID
     device = torch.device('cuda:{:d}'.format(rank))
@@ -94,7 +94,7 @@ def run(cfg, port, rank, world_size, train_dataset, val_dataset, seed=0):
 
     train_loader = get_dataloader(train_dataset,seed)
     val_loader = get_dataloader(train_dataset,seed)
-    NAME = wandb_run.name
+    NAME = name
     print("CUDA CHECK", NAME, next(model.parameters()).is_cuda)
     # print("# of Encoder Params = ", sum(p.numel()
     #       for p in model.encoder.parameters() if p.requires_grad))
@@ -155,9 +155,8 @@ def run(cfg, port, rank, world_size, train_dataset, val_dataset, seed=0):
             B_graph, geo_B, Bp, B_cg, geo_B_cg = B_graph.to(device), geo_B.to(
                 device), Bp.to(device), B_cg.to(device), geo_B_cg.to(device)
 
-            generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss = model(
-                frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg, epoch=epoch)
-            loss, losses = model.module.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, AR_loss, step=epoch)
+            generated_molecule = model(rank, frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg, epoch=epoch)
+            loss, losses = model.module.loss_function(generated_molecule, rank)
             print(f"Train LOSS = {loss}")
             loss.backward()
             losses['Train Loss'] = loss.cpu()
@@ -238,7 +237,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
     val_dataset = load_data(mode = 'val')
     port = random.randint(10000, 20000)
     for rank in range(num_gpus):
-        p = mp.Process(target=run, args=(cfg, port, rank, num_gpus, train_dataset, val_dataset))
+        p = mp.Process(target=run, args=(cfg, NAME, port, rank, num_gpus, train_dataset, val_dataset))
         p.start()
         procs.append(p)
     for p in procs:
