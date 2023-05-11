@@ -15,7 +15,6 @@ import glob
 import torch.distributed as dist
 from dgl.data import split_dataset
 from dgl.dataloading import GraphDataLoader
-from model.vae import VAE
 import dgl.multiprocessing as mp
 import torch
 from torch.nn.parallel import DistributedDataParallel
@@ -84,6 +83,16 @@ def get_dataloader(dataset, seed, batch_size=300, num_workers=1, mode = 'train')
     print("Data Loader", mode)
     return dataloader
 
+def get_contributing_params(y, top_level=True):
+    nf = y.grad_fn.next_functions if top_level else y.next_functions
+    for f, _ in nf:
+        try:
+            yield f.variable
+        except AttributeError:
+            pass  # node has no tensor
+        if f is not None:
+            yield from get_contributing_params(f, top_level=False)
+
 def run(cfg, name, port, rank, world_size, train_dataset, val_dataset, seed=0):
     init_process_group(world_size, rank, port)
     # Assume the GPU ID to be the same as the process ID
@@ -133,18 +142,19 @@ def run(cfg, name, port, rank, world_size, train_dataset, val_dataset, seed=0):
         print("Epoch", epoch)
         # The line below ensures all processes use a different
         # random ordering in data loading for each epoch.
-        train_loader.set_epoch(epoch)
         model.train()
+        train_loader.set_epoch(epoch)
         
-        if kl_annealing and epoch > 0 and epoch % kl_annealing_interval == 0:
-            kl_weight += kl_annealing_rate
-            kl_weight = min(kl_weight, kl_cap)
+        
+        # if kl_annealing and epoch > 0 and epoch % kl_annealing_interval == 0:
+        #     kl_weight += kl_annealing_rate
+        #     kl_weight = min(kl_weight, kl_cap)
             
-            dist_weight += dist_annealing_rate
-            dist_weight = min(dist_weight, dist_cap)
-        if kl_annealing:
-            model.module.kl_v_beta = kl_weight
-            model.module.lambda_distance = dist_weight
+        #     dist_weight += dist_annealing_rate
+        #     dist_weight = min(dist_weight, dist_cap)
+        # if kl_annealing:
+        #     model.module.kl_v_beta = kl_weight
+        #     model.module.lambda_distance = dist_weight
         count = 0
         
         for A_batch, B_batch in train_loader:
@@ -154,9 +164,15 @@ def run(cfg, name, port, rank, world_size, train_dataset, val_dataset, seed=0):
                 device), Ap.to(device), A_cg.to(device), geo_A_cg.to(device)
             B_graph, geo_B, Bp, B_cg, geo_B_cg = B_graph.to(device), geo_B.to(
                 device), Bp.to(device), B_cg.to(device), geo_B_cg.to(device)
-
-            generated_molecule = model(rank, frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg, epoch=epoch)
-            loss, losses = model.module.loss_function(generated_molecule, rank)
+            print("forward", rank, count)
+            generated_molecule = model(rank, frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg)
+            
+            contributing_parameters = set(get_contributing_params(generated_molecule))
+            all_parameters = set(model.parameters())
+            non_contributing = all_parameters - contributing_parameters
+            print(non_contributing)
+            
+            loss, losses = model.module.loss_function(generated_molecule, rank, geo_A)
             print(f"Train LOSS = {loss}")
             loss.backward()
             losses['Train Loss'] = loss.cpu()
@@ -177,7 +193,7 @@ def run(cfg, name, port, rank, world_size, train_dataset, val_dataset, seed=0):
             
             del A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids
             del B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids
-            del generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss, losses
+            del generated_molecule, model.module.storage[rank]#rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss, losses
             if count > 0 and count %10 == 0:
                 torch.cuda.empty_cache()
                 # model_path = f'/home/dannyreidenbach/mcg/coagulation/scripts/model_ckpt/{NAME}_{epoch}_temp.pt'
@@ -195,10 +211,8 @@ def run(cfg, name, port, rank, world_size, train_dataset, val_dataset, seed=0):
                 A_graph, geo_A, Ap, A_cg, geo_A_cg = A_graph.to(device), geo_A.to(device), Ap.to(device), A_cg.to(device), geo_A_cg.to(device)
                 B_graph, geo_B, Bp, B_cg, geo_B_cg = B_graph.to(device), geo_B.to(device), Bp.to(device), B_cg.to(device), geo_B_cg.to(device)
 
-                generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss = model(
-                        B_frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg, epoch=epoch, validation = True)
-                # ipdb.set_trace()
-                loss, losses = model.module.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, AR_loss, step=epoch, log_latent_stats = False)
+                generated_molecule = model(rank, B_frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg, validation = True)
+                loss, losses = model.module.loss_function(generated_molecule, rank, geo_A, log_latent_stats = False)
                 # train_loss_log.append(losses)
                 losses['Val Loss'] = loss.cpu()
                 # val_loss += losses['Val Loss']
@@ -231,7 +245,7 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
         config = cfg,
         save_code = True
     )
-    num_gpus = 15
+    num_gpus = 4
     procs = []
     train_dataset = load_data(mode = 'train')
     val_dataset = load_data(mode = 'val')

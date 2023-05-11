@@ -419,9 +419,10 @@ class Decoder(nn.Module):
         final_molecule = final_molecule.to('cpu')
         true_geo_batch = true_geo_batch.to('cpu')
         # for t in tqdm(range(max_nodes), desc='autoregressive time steps'):
+        print("")
         for t in range(max_nodes):
             # ipdb.set_trace()
-            if self.verbose: print("[Auto Regressive Step]")
+            print("[Auto Regressive Step]", t)
             id_batch = frag_batch[t]
             # if self.verbose: print("ID", id_batch)
             # try:

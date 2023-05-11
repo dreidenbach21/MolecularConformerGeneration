@@ -84,8 +84,8 @@ class VAE(nn.Module):
             geom_loss.append(1/len(src) * torch.sum((d_squared - geometry_graph.edata['feat'] ** 2) ** 2).unsqueeze(0))
         return torch.mean(torch.cat(geom_loss))
 
-    def loss_function(self, generated_molecule, rank, log_latent_stats = True):
-        rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geometry_graph, AR_loss = self.storage[rank]
+    def loss_function(self, generated_molecule, rank, geometry_graph, log_latent_stats = True):
+        rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss = self.storage[rank]
         kl_v, kl_h, kl_v_unclamped, mim = KL_terms
         if self.use_mim:
             kl_loss = 0.1*mim
