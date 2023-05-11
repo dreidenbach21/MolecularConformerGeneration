@@ -33,5 +33,5 @@ hydra:
 
 wandb:
   project: MCG
-  name: DRUGS_fifth_4gp_asia_debug
+  name: DRUGS_fifth_4gp_distributed
   notes: full drugs run debugging drugs run on multi gpu

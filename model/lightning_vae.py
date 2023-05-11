@@ -9,7 +9,7 @@ class VAE(pl.LightningModule):
         self.decoder = Decoder(self.encoder.atom_embedder, coordinate_type, **decoder_params) #.to(device)
         self.mse = nn.MSELoss()
         self.mse_none = nn.MSELoss(reduction ='none')
-        self.device = device
+        # self.device = device
         F = encoder_params["coord_F_dim"]
         D = encoder_params["latent_dim"]
         
@@ -49,7 +49,7 @@ class VAE(pl.LightningModule):
     # def flip_teacher_forcing(self):
     #     self.decoder.teacher_forcing = not self.decoder.teacher_forcing
 
-    def forward(self, rank, frag_ids, A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, validation = False):
+    def forward(self, frag_ids, A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, validation = False):
         enc_out = self.forward_vae(A_graph, B_graph, geometry_graph_A, geometry_graph_B, A_pool, B_pool, A_cg, B_cg, geometry_graph_A_cg, geometry_graph_B_cg, validation)
         results, geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg = enc_out
         # print("[ENC] encoder output geom loss adn geom cg loss", geom_losses, geom_loss_cg)
@@ -102,7 +102,7 @@ class VAE(pl.LightningModule):
         # import ipdb; ipdb.set_trace()
         _, global_mse = self.coordinate_loss(dec_results, generated_molecule, align =  True)
 
-        loss =  self.lambda_ar_mse*ar_mse + self.lambda_global_mse*global_mse + kl_loss #+ cc_loss
+        loss = self.lambda_global_mse*global_mse + kl_loss #+ cc_loss  self.lambda_ar_mse*ar_mse +
         results, geom_losses, geom_loss_cg, full_trajectory, full_trajectory_cg = enc_out
         
         if log_latent_stats:
@@ -410,7 +410,7 @@ class VAE(pl.LightningModule):
         A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
         B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids = B_batch
         generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss = self(frag_ids, A_graph, B_graph, geo_A, geo_B, Ap, Bp, A_cg, B_cg, geo_A_cg, geo_B_cg)
-        loss, losses = model.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, geo_A, AR_loss)
+        loss, losses = self.loss_function(generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss, geo_A)
         return loss
 
     def configure_optimizers(self):

@@ -76,7 +76,7 @@ def get_dataloader(dataset, seed=None, batch_size=400, num_workers=0, mode = 'tr
         use_ddp = True
     else:
         use_ddp = False
-    dataloader = dgl.dataloading.GraphDataLoader(dataset, use_ddp=use_ddp, batch_size=batch_size,
+    dataloader = dgl.dataloading.GraphDataLoader(dataset, use_ddp=use_ddp, device="cuda",batch_size=batch_size,
                                                  shuffle=True, drop_last=False, num_workers=num_workers, collate_fn = collate)
     print("Data Loader",mode)
     return dataloader
@@ -95,12 +95,12 @@ def main(cfg: DictConfig):
     #     config = cfg,
     #     save_code = True
     # )
-    model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, coordinate_type = cfg.coordinates, device = device)
+    model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, coordinate_type = cfg.coordinates)
     train_dataset = load_data(mode = 'train')
     val_dataset = load_data(mode = 'val')
     train_loader = get_dataloader(train_dataset)
     val_loader = get_dataloader(train_dataset)
-    trainer = Trainer(
+    trainer = pl.Trainer(
         accelerator="gpu",
         devices=[0, 1, 2, 3],
         max_epochs=10,

@@ -27,7 +27,7 @@ drugs_types = {'H': 0, 'Li': 1, 'B': 2, 'C': 3, 'N': 4, 'O': 5, 'F': 6, 'Na': 7,
 def init_model(cfg, seed, device):
     torch.manual_seed(seed)
     model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, coordinate_type = cfg.coordinates, device = device).to(device)
-    model = DistributedDataParallel(model, device_ids=[device], output_device=device) #, find_unused_parameters=True)
+    model = DistributedDataParallel(model, device_ids=[device], output_device=device, find_unused_parameters=True)
     return model
 
 def init_process_group(world_size, rank, port):
@@ -73,7 +73,7 @@ def load_data(mode = 'train', data_dir='/home/dannyreidenbach/data/DRUGS/drugs/'
                                    boltzmann_resampler=None)
     return data
 
-def get_dataloader(dataset, seed, batch_size=300, num_workers=1, mode = 'train'):
+def get_dataloader(dataset, seed, batch_size=400, num_workers=0, mode = 'train'):
     if mode == 'train':
         use_ddp = True
     else:
@@ -136,15 +136,15 @@ def run(cfg, name, port, rank, world_size, train_dataset, val_dataset, seed=0):
         train_loader.set_epoch(epoch)
         
         
-        # if kl_annealing and epoch > 0 and epoch % kl_annealing_interval == 0:
-        #     kl_weight += kl_annealing_rate
-        #     kl_weight = min(kl_weight, kl_cap)
+        if kl_annealing and epoch > 0 and epoch % kl_annealing_interval == 0:
+            kl_weight += kl_annealing_rate
+            kl_weight = min(kl_weight, kl_cap)
             
-        #     dist_weight += dist_annealing_rate
-        #     dist_weight = min(dist_weight, dist_cap)
-        # if kl_annealing:
-        #     model.module.kl_v_beta = kl_weight
-        #     model.module.lambda_distance = dist_weight
+            dist_weight += dist_annealing_rate
+            dist_weight = min(dist_weight, dist_cap)
+        if kl_annealing:
+            model.module.kl_v_beta = kl_weight
+            model.module.lambda_distance = dist_weight
         count = 0
         
         for A_batch, B_batch in train_loader:
@@ -246,3 +246,4 @@ def main(cfg: DictConfig): #['encoder', 'decoder', 'vae', 'optimizer', 'losses',
 # sphinx_gallery_thumbnail_path = '_static/blitz_5_graph_classification.png'
 if __name__ == '__main__':
     main()
+    

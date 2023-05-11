@@ -42,7 +42,7 @@ class VAE(nn.Module):
         # self.prior_mean_h = Scalar_MLP(D, D, D, use_batchnorm = False)
         # self.prior_logvar_V = Scalar_MLP(F*3, F*3, F, use_batchnorm = False) #! No longer need since hard coding to 0
         # self.prior_logvar_h = Scalar_MLP(D, D, D, use_batchnorm = False)
-        self.bn = VNBatchNorm(F)
+        # self.bn = VNBatchNorm(F)
 
     # def flip_teacher_forcing(self):
     #     self.decoder.teacher_forcing = not self.decoder.teacher_forcing

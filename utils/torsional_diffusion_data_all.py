@@ -629,7 +629,7 @@ class ConformerDataset(DGLDataset):
                 count = 0
                 results_A, results_B = [], []
                 self.datapoints = []
-                for chunk in [5]:#range(6): #! operating on the small chunk for multi gpu debugging
+                for chunk in range(6): #! operating on the small chunk for multi gpu debugging
                     if chunk > 7: 
                         print("Skipping large chunks for debugging")
                         break
