@@ -625,32 +625,75 @@ class ConformerDataset(DGLDataset):
             self.datapoints = [(a,b) for a,b in zip(results_A, results_B)]
             print("Loaded Successfully",  self.save_dir, self.use_name, len(self.datapoints))
         else:
-            try:
-                count = 0
-                results_A, results_B = [], []
-                self.datapoints = []
-                for chunk in range(6): #! operating on the small chunk for multi gpu debugging
-                    if chunk > 7: 
-                        print("Skipping large chunks for debugging")
-                        break
-                    print(f"Loading Chunk {chunk} ...")
-                    graphs, _ = dgl.data.utils.load_graphs(self.save_dir + f'/{self.use_name}_{chunk}_graphs.bin')
-                    info = dgl.data.utils.load_info(self.save_dir + f'/{self.use_name}_{chunk}_infos.bin')
+            if True:
+                try:
                     count = 0
-                    print(f"Loading Chunk {chunk} = {len(graphs)//10}")
                     results_A, results_B = [], []
-                    for i in range(0, len(graphs), 10):
-                        AB = graphs[i: i+10]
-                        A_frag_ids, B_frag_ids = info[count]
-                        count += 1
-                        data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg = AB[:5]
-                        data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg = AB[5:]
-                        results_A.append((data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids))
-                        results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids))
-                    self.datapoints.extend([(a,b) for a,b in zip(results_A, results_B)])
-                print("Loaded Successfully",  self.save_dir, self.use_name, len(self.datapoints))
-            except:
-                import ipdb; ipdb.set_trace()
+                    self.datapoints = []
+                    for chunk in range(6): #! operating on the small chunk for multi gpu debugging
+                        if chunk > 7: 
+                            print("Skipping large chunks for debugging")
+                            break
+                        print(f"Loading Chunk {chunk} ...")
+                        graphs, _ = dgl.data.utils.load_graphs(self.save_dir + f'/{self.use_name}_{chunk}_graphs.bin')
+                        info = dgl.data.utils.load_info(self.save_dir + f'/{self.use_name}_{chunk}_infos.bin')
+                        count = 0
+                        print(f"Loading Chunk {chunk} = {len(graphs)//10}")
+                        results_A, results_B = [], []
+                        cur, mark = None, 0
+                        for i in range(0, len(graphs), 10):
+                            AB = graphs[i: i+10]
+                            A_frag_ids, B_frag_ids = info[count]
+                            count += 1
+                            data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg = AB[:5]
+                            data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg = AB[5:]
+                            guess = (data_A.ndata['x'].shape[0], A_cg.ndata['x'].shape[0])
+                            if cur == None:
+                                cur = guess
+                                mark =+ 1
+                            elif mark >= 5:
+                                continue
+                            elif mark >= 2 and cur == guess:
+                                mark += 1
+                                continue
+                            elif mark < 2 and cur == guess:
+                                mark += 1
+                            elif cur !=  guess:
+                                mark = 1
+                                cur = guess
+                            results_A.append((data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids))
+                            results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids))
+                        self.datapoints.extend([(a,b) for a,b in zip(results_A, results_B)])
+                    print("Loaded Successfully",  self.save_dir, self.use_name, len(self.datapoints))
+                except:
+                    import ipdb; ipdb.set_trace()
+            else:
+                try:
+                    count = 0
+                    results_A, results_B = [], []
+                    self.datapoints = []
+                    for chunk in range(6): #! operating on the small chunk for multi gpu debugging
+                        if chunk > 7: 
+                            print("Skipping large chunks for debugging")
+                            break
+                        print(f"Loading Chunk {chunk} ...")
+                        graphs, _ = dgl.data.utils.load_graphs(self.save_dir + f'/{self.use_name}_{chunk}_graphs.bin')
+                        info = dgl.data.utils.load_info(self.save_dir + f'/{self.use_name}_{chunk}_infos.bin')
+                        count = 0
+                        print(f"Loading Chunk {chunk} = {len(graphs)//10}")
+                        results_A, results_B = [], []
+                        for i in range(0, len(graphs), 10):
+                            AB = graphs[i: i+10]
+                            A_frag_ids, B_frag_ids = info[count]
+                            count += 1
+                            data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg = AB[:5]
+                            data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg = AB[5:]
+                            results_A.append((data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids))
+                            results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids))
+                        self.datapoints.extend([(a,b) for a,b in zip(results_A, results_B)])
+                    print("Loaded Successfully",  self.save_dir, self.use_name, len(self.datapoints))
+                except:
+                    import ipdb; ipdb.set_trace()
                 
     
     def has_cache(self):

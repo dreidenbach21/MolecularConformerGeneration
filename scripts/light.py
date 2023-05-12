@@ -81,6 +81,18 @@ def get_dataloader(dataset, seed=None, batch_size=400, num_workers=0, mode = 'tr
     print("Data Loader",mode)
     return dataloader
 
+class DataModule(pl.LightningDataModule):
+    def __init__(self): #train_dataset, val_dataset
+        super().__init__()
+        self.train_dataset = load_data(mode = 'train')
+        self.val_dataset = load_data(mode = 'val')
+        
+    def train_dataloader(self):
+        return dgl.dataloading.GraphDataLoader(self.train_dataset, use_ddp=True,batch_size=400, shuffle=True, drop_last=False, num_workers=0, collate_fn = collate)
+    
+    def val_dataloader(self):
+        return dgl.dataloading.GraphDataLoader(self.val_dataset, use_ddp=False,batch_size=400, shuffle=True, drop_last=False, num_workers=0, collate_fn = collate)
+
 @hydra.main(config_path="../configs", config_name="config_drugs.yaml")
 def main(cfg: DictConfig): 
     import datetime
@@ -96,18 +108,19 @@ def main(cfg: DictConfig):
     #     save_code = True
     # )
     model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, coordinate_type = cfg.coordinates)
-    train_dataset = load_data(mode = 'train')
-    val_dataset = load_data(mode = 'val')
-    train_loader = get_dataloader(train_dataset)
-    val_loader = get_dataloader(train_dataset)
+    # train_dataset = load_data(mode = 'train')
+    # val_dataset = load_data(mode = 'val')
+    # train_loader = get_dataloader(train_dataset)
+    # val_loader = get_dataloader(train_dataset)
+    datamodule = DataModule() #train_dataset, val_dataset)
     trainer = pl.Trainer(
         accelerator="gpu",
         devices=[0, 1, 2, 3],
         max_epochs=10,
         # callbacks=[checkpoint_callback],
-        strategy="ddp",
+        strategy="ddp_spawn",
     )
-    trainer.fit(model = model, train_dataloaders=train_loader)
+    trainer.fit(model = model, datamodule=datamodule) #train_dataloaders=train_loader)
 
 if __name__ == "__main__":
     main()
