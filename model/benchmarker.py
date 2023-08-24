@@ -99,6 +99,8 @@ class BenchmarkRunner():
             self.name = name
         self.batch_size = batch_size
         self.only_alignmol = False
+        if dataset == 'xl':
+            self.only_alignmol = True
         self.save_dir = save_dir
         self.types = qm9_types if dataset == 'qm9' else drugs_types
         self.use_diffusion_angle_def = False
@@ -112,7 +114,9 @@ class BenchmarkRunner():
         if self.has_cache():
             self.clean_true_mols()
             self.smiles, data = self.load()
+            print(f"{len(data)} Conformers Loaded")
         else:
+            print("NO CACHE \n\n\n\n\n")
             self.build_test_dataset_V2()
             self.save() 
             self.smiles = [x[0] for x in self.datapoints]
@@ -493,7 +497,8 @@ class BenchmarkRunner():
                     for A_batch, B_batch in self.dataloader:
                         A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
                         B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids= B_batch
-
+                        # A_cg.ndata['v'] = torch.zeros((A_cg.ndata['v'].shape[0], self.F, 3))
+                        # B_cg.ndata['v'] = torch.zeros((B_cg.ndata['v'].shape[0], self.F, 3))
                         A_graph, geo_A, Ap, A_cg, geo_A_cg = A_graph.to('cuda:0'), geo_A.to('cuda:0'), Ap.to('cuda:0'), A_cg.to('cuda:0'), geo_A_cg.to('cuda:0')
                         B_graph, geo_B, Bp, B_cg, geo_B_cg = B_graph.to('cuda:0'), geo_B.to('cuda:0'), Bp.to('cuda:0'), B_cg.to('cuda:0'), geo_B_cg.to('cuda:0')
                         # import ipdb; ipdb.set_trace()
@@ -523,6 +528,7 @@ class BenchmarkRunner():
             for A_batch, B_batch in self.dataloader:
                 # A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
                 B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids = B_batch
+                # B_cg.ndata['v'] = torch.zeros((B_cg.ndata['v'].shape[0], self.F, 3))
                 molecules.extend(dgl.unbatch(B_graph.cpu()))
                 distances.extend(dgl.unbatch(geo_B.cpu()))
             self.rdkit_molecules = molecules
@@ -589,6 +595,10 @@ class BenchmarkRunner():
         else:
             map_fn = map
         self.final_confs_temp = final_confs
+        conf_save_path = os.path.join(self.save_dir, f'{self.name}_final_confs_gen3_rmsd_fix_2.pkl')
+        with open(conf_save_path, 'wb') as handle:
+            pickle.dump(final_confs, handle)
+            
         for res in tqdm(map_fn(self.worker_fn, jobs), total=len(jobs)):
             self.populate_results(res)
 
@@ -713,6 +723,7 @@ class BenchmarkRunner():
         print("Saved Successfully", self.save_dir, self.name, len(self.datapoints))
     
     def load(self):
+        print('Loading data ...')
         graphs, _ = dgl.data.utils.load_graphs(self.save_dir + f'/{self.name}_graphs.bin')
         info = dgl.data.utils.load_info(self.save_dir + f'/{self.name}_infos.bin')
         smiles = dgl.data.utils.load_info(self.save_dir + f'/{self.name}_smiles.bin')
@@ -745,11 +756,17 @@ class BenchmarkRunner():
             model_confs = self.final_confs_temp[correct_smi]
             tc = true_confs[i_true]
             rmsds = []
+            # import ipdb; ipdb.set_trace()
             for mc in model_confs:
                 try:
                     if self.only_alignmol:
                         rmsd = AllChem.AlignMol(Chem.RemoveHs(tc), Chem.RemoveHs(mc))
                     else:
+                        # rmsd = AllChem.GetBestRMS(Chem.RemoveHs(tc), Chem.RemoveHs(mc))
+                        # tc_coords = torch.tensor(tc.GetConformer().GetPositions())
+                        # mc_coords = torch.tensor(mc.GetConformer().GetPositions())
+                        # tc_coords = self.align(tc_coords, mc_coords)
+                        # rmsd = self.calculate_rmsd(tc_coords.numpy(), mc_coords.numpy())
                         a = tc.GetConformer().GetPositions()
                         b = mc.GetConformer().GetPositions()
                         err = np.mean((a - b) ** 2)
@@ -766,3 +783,40 @@ class BenchmarkRunner():
                     rmsds = [np.nan] * len(model_confs)
                     break
             return smi, correct_smi, i_true, rmsds
+    
+    def align(self, source, target):
+        with torch.no_grad():
+            lig_coords_pred = target
+            lig_coords = source
+            if source.shape[0] == 1:
+                return source
+            lig_coords_pred_mean = lig_coords_pred.mean(dim=0, keepdim=True)  # (1,3)
+            lig_coords_mean = lig_coords.mean(dim=0, keepdim=True)  # (1,3)
+
+            A = (lig_coords_pred - lig_coords_pred_mean).transpose(0, 1) @ (lig_coords - lig_coords_mean) 
+            A = A + torch.eye(A.shape[0]).to(A.device) * 1e-5 #added noise to help with gradients
+            if torch.isnan(A).any() or torch.isinf(A).any():
+                print("\n\n\n\n\n\n\n\n\n\nThe SVD tensor contains NaN or Inf values")
+                return source
+                # import ipdb; ipdb.set_trace()
+            U, S, Vt = torch.linalg.svd(A)
+            # corr_mat = torch.diag(1e-7 + torch.tensor([1, 1, torch.sign(torch.det(A))], device=lig_coords_pred.device))
+            corr_mat = torch.diag(torch.tensor([1, 1, torch.sign(torch.det(A))], device=lig_coords_pred.device))
+            rotation = (U @ corr_mat) @ Vt
+            translation = lig_coords_pred_mean - torch.t(rotation @ lig_coords_mean.t())  # (1,3)
+        return (rotation @ lig_coords.t()).t() + translation
+    
+    def calculate_rmsd(self, array1, array2):
+        # Calculate the squared differences
+        squared_diff = np.square(array1 - array2)
+        
+        # Sum the squared differences along the axis=1
+        sum_squared_diff = np.sum(squared_diff, axis=1)
+        
+        # Calculate the mean of the squared differences
+        mean_squared_diff = np.mean(sum_squared_diff)
+        
+        # Calculate the square root of the mean squared differences
+        rmsd = np.sqrt(mean_squared_diff)
+        
+        return rmsd

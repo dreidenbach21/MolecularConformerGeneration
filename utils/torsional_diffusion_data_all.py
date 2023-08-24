@@ -85,6 +85,105 @@ def get_bond_idx(m, i, j):
 
 QM9_DIMS = ([5, 4, 2, 8, 6, 8, 4, 6, 5], 0)
 DRUG_DIMS = ([35, 4, 2, 8, 6, 8, 4, 6, 5], 0)
+
+def featurize_mol_new(mol, types=drugs_types, conf_id = 0, use_rdkit_coords = False, seed = 0, radius = 4, max_neighbors=None, old_rdkit = False, use_mmff = True):
+    if type(types) is str:
+        if types == 'qm9':
+            types = qm9_types
+        elif types == 'drugs':
+            types = drugs_types
+    # print(conf_id)
+    N = mol.GetNumAtoms()
+    atom_type_idx = []
+    atomic_number = []
+    atom_features = []
+    chiral_tag = []
+    ring = mol.GetRingInfo()
+    for i, atom in enumerate(mol.GetAtoms()):
+        atom_type_idx.append(types[atom.GetSymbol()])
+        chiral_tag.append(chirality[atom.GetChiralTag()])
+        atomic_number.append(atom.GetAtomicNum())
+        
+        atom_features.extend([atom.GetAtomicNum(), 1 if atom.GetIsAromatic() else 0])
+        atom_features.extend(one_k_encoding(atom.GetDegree(), [0, 1, 2, 3, 4, 5, 6]))
+        atom_features.extend(one_k_encoding(atom.GetHybridization(), [
+            Chem.rdchem.HybridizationType.SP,
+            Chem.rdchem.HybridizationType.SP2,
+            Chem.rdchem.HybridizationType.SP3,
+            Chem.rdchem.HybridizationType.SP3D,
+            Chem.rdchem.HybridizationType.SP3D2]))#6
+        atom_features.extend(one_k_encoding(atom.GetImplicitValence(), [0, 1, 2, 3, 4, 5, 6]))#8
+        atom_features.extend(one_k_encoding(atom.GetFormalCharge(), [-1, 0, 1]))#4
+        atom_features.extend([int(ring.IsAtomInRingOfSize(i, 3)),
+                              int(ring.IsAtomInRingOfSize(i, 4)),
+                              int(ring.IsAtomInRingOfSize(i, 5)),
+                              int(ring.IsAtomInRingOfSize(i, 6)),
+                              int(ring.IsAtomInRingOfSize(i, 7)),
+                              int(ring.IsAtomInRingOfSize(i, 8))])#6
+        atom_features.extend(one_k_encoding(int(ring.NumAtomRings(i)), [0, 1, 2, 3])) # 5
+
+    x1 = F.one_hot(torch.tensor(atom_type_idx), num_classes=len(types)) # 5
+    x2 = torch.tensor(atom_features).view(N, -1) # 39
+    x3 = torch.tensor(chiral_tag).view(N, -1).to(torch.float) # 1
+    node_features = torch.cat([x1.to(torch.float), x3, x2], dim=-1)
+    
+    conf = mol.GetConformer(conf_id)
+    true_lig_coords = conf.GetPositions()
+    lig_coords = true_lig_coords
+    num_nodes = lig_coords.shape[0]
+    remove_centroid = True
+    # print("Lower Level Featurize", use_rdkit_coords, lig_coords)
+    if remove_centroid:
+        lig_coords -= np.mean(lig_coords, axis = 0)
+        true_lig_coords -= np.mean(true_lig_coords, axis = 0)
+        
+    assert lig_coords.shape[1] == 3
+    distance = spa.distance.cdist(lig_coords, lig_coords)
+    src_list = []
+    dst_list = []
+    dist_list = []
+    mean_norm_list = []
+    bond_list = []
+    for i in range(num_nodes):
+        dst = list(np.where(distance[i, :] < radius)[0])
+        dst.remove(i)
+        if max_neighbors != None and len(dst) > max_neighbors:
+            dst = list(np.argsort(distance[i, :]))[1: max_neighbors + 1]  # closest would be self loop
+        if len(dst) == 0:
+            dst = list(np.argsort(distance[i, :]))[1:2]  # closest would be the index i itself > self loop
+            #print( f'The lig_radius {radius} was too small for one lig atom such that it had no neighbors. So we connected {i} to the closest other lig atom {dst}')
+        assert i not in dst
+        assert dst != []
+        src = [i] * len(dst)
+        src_list.extend(src)
+        dst_list.extend(dst)
+        valid_dist = list(distance[i, dst])
+        dist_list.extend(valid_dist)
+        valid_dist_np = distance[i, dst]
+        sigma = np.array([1., 2., 5., 10., 30.]).reshape((-1, 1))
+        weights = softmax(- valid_dist_np.reshape((1, -1)) ** 2 / sigma, axis=1)  # (sigma_num, neigh_num)
+        assert weights[0].sum() > 1 - 1e-2 and weights[0].sum() < 1.01
+        diff_vecs = lig_coords[src, :] - lig_coords[dst, :]  # (neigh_num, 3)
+        mean_vec = weights.dot(diff_vecs)  # (sigma_num, 3)
+        denominator = weights.dot(np.linalg.norm(diff_vecs, axis=1))  # (sigma_num,)
+        mean_vec_ratio_norm = np.linalg.norm(mean_vec, axis=1) / denominator  # (sigma_num,)
+        mean_norm_list.append(mean_vec_ratio_norm)
+        bond_list.extend([get_bond_idx(mol, int(i), int(d)) for d in dst])
+    assert len(src_list) == len(dst_list)
+    assert len(dist_list) == len(dst_list)
+    
+    graph = dgl.graph((torch.tensor(src_list), torch.tensor(dst_list)), num_nodes=num_nodes, idtype=torch.int32)
+    graph.ndata['feat'] = node_features #lig_atom_featurizer(mol)
+    graph.ndata['ref_feat'] = node_features
+    edge_type = torch.from_numpy(np.asarray(bond_list).astype(np.float32)).type(torch.long) #torch.tensor(edge_type, dtype=torch.long)
+    edge_attr = F.one_hot(edge_type, num_classes=len(bonds)+1).to(torch.float)
+    graph.edata['feat'] = torch.cat((distance_featurizer(dist_list, 0.75), edge_attr), dim = -1)
+    graph.ndata['x'] = torch.from_numpy(np.array(lig_coords).astype(np.float32))
+    graph.ndata['x_ref'] = torch.from_numpy(np.array(lig_coords).astype(np.float32))
+    graph.ndata['x_true'] = torch.from_numpy(np.array(true_lig_coords).astype(np.float32))
+    graph.ndata['mu_r_norm'] = torch.from_numpy(np.array(mean_norm_list).astype(np.float32))
+    return graph
+
 def featurize_mol(mol, types=drugs_types, use_rdkit_coords = False, seed = 0, radius = 4, max_neighbors=None, old_rdkit = False, use_mmff = True):
     if type(types) is str:
         if types == 'qm9':
@@ -609,7 +708,7 @@ class ConformerDataset(DGLDataset):
         print("Saved Successfully", self.save_dir, self.use_name, len(self.datapoints))
     
     def load(self):
-        if self.dataset == "qm9":
+        if self.dataset == "qm9" or self.dataset == 'xl':
             graphs, _ = dgl.data.utils.load_graphs(self.save_dir + f'/{self.use_name}_graphs.bin')
             info = dgl.data.utils.load_info(self.save_dir + f'/{self.use_name}_infos.bin')
             count = 0
@@ -625,7 +724,7 @@ class ConformerDataset(DGLDataset):
             self.datapoints = [(a,b) for a,b in zip(results_A, results_B)]
             print("Loaded Successfully",  self.save_dir, self.use_name, len(self.datapoints))
         else:
-            if True:
+            if False:
                 try:
                     count = 0
                     results_A, results_B = [], []
@@ -641,28 +740,35 @@ class ConformerDataset(DGLDataset):
                         print(f"Loading Chunk {chunk} = {len(graphs)//10}")
                         results_A, results_B = [], []
                         cur, mark = None, 0
+                        
+                        book = defaultdict(int)
                         for i in range(0, len(graphs), 10):
                             AB = graphs[i: i+10]
                             A_frag_ids, B_frag_ids = info[count]
                             count += 1
                             data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg = AB[:5]
                             data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg = AB[5:]
-                            guess = (data_A.ndata['x'].shape[0], A_cg.ndata['x'].shape[0])
-                            if cur == None:
-                                cur = guess
-                                mark =+ 1
-                            elif mark >= 5:
+                            guess = (data_A.ndata['x'].shape[0], A_cg.ndata['x'].shape[0], tuple(tuple(s) for s in A_frag_ids))
+                            if book[guess] < 2:
+                                book[guess] += 1
+                            else:
                                 continue
-                            elif mark >= 2 and cur == guess:
-                                mark += 1
-                                continue
-                            elif mark < 2 and cur == guess:
-                                mark += 1
-                            elif cur !=  guess:
-                                mark = 1
-                                cur = guess
+                            # if cur == None:
+                            #     cur = guess
+                            #     mark =+ 1
+                            # elif mark >= 5:
+                            #     continue
+                            # elif mark >= 2 and cur == guess:
+                            #     mark += 1
+                            #     continue
+                            # elif mark < 2 and cur == guess:
+                            #     mark += 1
+                            # elif cur !=  guess:
+                            #     mark = 1
+                            #     cur = guess
                             results_A.append((data_A, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids))
                             results_B.append((data_B, geometry_graph_B, Bp, B_cg, geometry_graph_B_cg, B_frag_ids))
+                        # import ipdb; ipdb.set_trace()
                         self.datapoints.extend([(a,b) for a,b in zip(results_A, results_B)])
                     print("Loaded Successfully",  self.save_dir, self.use_name, len(self.datapoints))
                 except:
@@ -954,4 +1060,3 @@ def load_big_drugs(batch_size = 32, mode = 'train', data_dir='/home/dannyreidenb
     dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=num_workers,
                                             collate_fn = collate)
     return dataloader, data
-        
