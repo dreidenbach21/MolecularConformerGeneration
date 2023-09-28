@@ -1,6 +1,6 @@
 import os
-# os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-# os.environ["CUDA_VISIBLE_DEVICES"]="9"
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"]="5"
 import sys
 sys.path.insert(0, '/home/dreidenbach/code/mcg')
 sys.path.insert(0, '/home/dreidenbach/code/mcg/coagulation')
@@ -43,7 +43,8 @@ def dgl_to_mol(mol, data, mmff=False, rmsd=False, copy=True, key = 'x_cc'):
             AllChem.MMFFOptimizeMoleculeConfs(mol, mmffVariant='MMFF94s')
         except Exception as e:
             pass
-    return mol
+    if not copy: return mol
+    return deepcopy(mol)
 
 def lazy_process_data(dataset):
     for data in dataset:
@@ -104,7 +105,7 @@ class CoarsenConf():
         # torch.multiprocessing.set_sharing_strategy('file_system')
         self.dataloader = None
         cfg = compose(config_name)
-        model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, cfg.coordinates, device = "cuda") #.cuda()
+        model = VAE(cfg.vae, cfg.encoder, cfg.decoder, cfg.losses, cfg.coordinates, device = "cuda").cuda()
         chkpt = torch.load(weights_path)
         if "model" in chkpt:
             chkpt = chkpt['model']
@@ -112,23 +113,44 @@ class CoarsenConf():
         self.model = model
         # self.dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size= self.batch_size, shuffle=False, drop_last=False, num_workers=0 ,collate_fn = collate)
     
-    def generate_smi(self, args):
-        conf_id, mol = args
-        print("conf id", conf_id)
-        # mol = self.get_rdkit_coords(smi)
-        # if mol == None:
-        #     print("Error in embedding", smi)
-        #     return None
-        # feats = featurize_mol_new(mol=mol, types=self.types, conf_id = conf_id)
-        # A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = False)
-        # A_cg = conditional_coarsen_3d(feats, A_frag_ids, A_cg_map, A_bond_break, radius=4, max_neighbors=None, latent_dim_D = 64, latent_dim_F = 32)
-        # geometry_graph_A = get_geometry_graph(mol)
-        # Ap = create_pooling_graph(feats, A_frag_ids)
-        # geometry_graph_A_cg = get_coarse_geometry_graph(A_cg, A_cg_map)
-        print("conf id", conf_id)
-        return conf_id
-        # return mol, feats, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids
+    # def generate_smi(self, args):
+    #     conf_id, mol = args
+    #     print("conf id", conf_id)
+    #     # mol = self.get_rdkit_coords(smi)
+    #     # if mol == None:
+    #     #     print("Error in embedding", smi)
+    #     #     return None
+    #     # feats = featurize_mol_new(mol=mol, types=self.types, conf_id = conf_id)
+    #     # A_frags, A_frag_ids, A_adj, A_out, A_bond_break, A_cg_bonds, A_cg_map = coarsen_molecule(mol, use_diffusion_angle_def = False)
+    #     # A_cg = conditional_coarsen_3d(feats, A_frag_ids, A_cg_map, A_bond_break, radius=4, max_neighbors=None, latent_dim_D = 64, latent_dim_F = 32)
+    #     # geometry_graph_A = get_geometry_graph(mol)
+    #     # Ap = create_pooling_graph(feats, A_frag_ids)
+    #     # geometry_graph_A_cg = get_coarse_geometry_graph(A_cg, A_cg_map)
+    #     print("conf id", conf_id)
+    #     return conf_id
+    #     # return mol, feats, geometry_graph_A, Ap, A_cg, geometry_graph_A_cg, A_frag_ids
 
+    def load_data(self, batch_size = None):
+        conf_save_path = os.path.join(self.save_dir, f'{self.name}_rdkit_all.pkl')
+        with open(conf_save_path, 'rb') as handle:
+            self.all_moles = pickle.load(handle)
+            
+        conf_save_path_loader = os.path.join(self.save_dir, f'{self.name}_data_loader.pkl')
+        with open(conf_save_path_loader, 'rb') as handle:
+            self.model_preds = pickle.load(handle)
+            
+        self.datapoints = []
+        for k, v in self.model_preds.items():
+            if v[0] == None:
+                continue
+            self.datapoints.extend([(k, vv) for vv in v])
+        self.smiles = [x[0] for x in self.datapoints]
+        data = [x[1] for x in self.datapoints]
+        print(f"Generating {len(data)} molecules")
+        if batch_size is None:
+            batch_size = self.batch_size
+        self.dataloader = dgl.dataloading.GraphDataLoader(data, use_ddp=False, batch_size= batch_size, shuffle=False, drop_last=False, num_workers=0 ,collate_fn = collate)
+            
     def generate_parallel(self, smile_list = None):
         if self.dataloader == None:
             self.model_preds = defaultdict(list)
@@ -138,7 +160,7 @@ class CoarsenConf():
                 smile_list = {smile_list: 1}
             countx = 1
             total = len(smile_list)
-            wrapper = partial(self.generate_smi)
+            # wrapper = partial(self.generate_smi)
             for smi, count in smile_list.items():
                 print(countx, total, time.asctime( time.localtime(time.time()) ))
                 countx += 1
@@ -157,6 +179,14 @@ class CoarsenConf():
                     energies.sort(key=lambda x: x[1])
                     ids = [x[0] for x in energies[:count]]
                     indices = [(idx, m) for idx, m in indices if idx in ids]
+                elif len(indices) < count:
+                    new_mol = []
+                    for _ in range(count - len(indices)):
+                        idx_, mol_ = random.choice(indices)
+                        new_mol.append(copy.deepcopy(mol_))
+                    for nidx, m in enumerate(new_mol):
+                        indices.append((len(indices)+ nidx, m))
+                assert(len(indices) == count)
                     
                 # pdata = lazy_process_data(indices)
                 # with mp.Pool(processes=16) as pool:
@@ -194,13 +224,14 @@ class CoarsenConf():
             
         molecules = []
         distances = []
-        count = 1
+        xcount = 1
         total = len(self.dataloader)
         with torch.no_grad():
             for A_batch, B_batch in self.dataloader:
                 A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
                 B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids= B_batch
-                print(f"Batch {count} out of {total}")
+                print(f"Batch {xcount} out of {total}")
+                xcount += 1
                 A_graph, geo_A, Ap, A_cg, geo_A_cg = A_graph.to('cuda:0'), geo_A.to('cuda:0'), Ap.to('cuda:0'), A_cg.to('cuda:0'), geo_A_cg.to('cuda:0')
                 B_graph, geo_B, Bp, B_cg, geo_B_cg = B_graph.to('cuda:0'), geo_B.to('cuda:0'), Bp.to('cuda:0'), B_cg.to('cuda:0'), geo_B_cg.to('cuda:0')
                 generated_molecule, rdkit_reference, dec_results, channel_selection_info, KL_terms, enc_out, AR_loss = self.model(
@@ -210,11 +241,14 @@ class CoarsenConf():
         self.final_confs = defaultdict(list)
         self.generated_molecules = molecules
         self.generated_molecules_distances = distances
-        for smi, data in zip(self.smiles, molecules):
-            self.final_confs[smi].append(dgl_to_mol(copy.deepcopy(self.all_moles[smi][0]), data, mmff=False, rmsd=False, copy=True))
-        conf_save_path = os.path.join(self.save_dir, f'{self.name}_coarsen_conf_all.pkl')
-        with open(conf_save_path, 'wb') as handle:
-            pickle.dump(self.final_confs, handle)
+        try:
+            for smi, data in zip(self.smiles, molecules):
+                self.final_confs[smi].append(dgl_to_mol(copy.deepcopy(self.all_moles[smi][0][0]), data, mmff=False, rmsd=False, copy=True))
+            conf_save_path = os.path.join(self.save_dir, f'{self.name}_coarsen_conf_all.pkl')
+            with open(conf_save_path, 'wb') as handle:
+                pickle.dump(self.final_confs, handle)
+        except:
+            import ipdb; ipdb.set_trace()
         return self.final_confs
 
     def generate(self, smile_list = None):
@@ -270,6 +304,7 @@ class CoarsenConf():
                 A_graph, geo_A, Ap, A_cg, geo_A_cg, frag_ids = A_batch
                 B_graph, geo_B, Bp, B_cg, geo_B_cg, B_frag_ids= B_batch
                 print(f"Batch {count} out of {total}")
+                count+= 1
                 # A_cg.ndata['v'] = torch.zeros((A_cg.ndata['v'].shape[0], self.F, 3))
                 # B_cg.ndata['v'] = torch.zeros((B_cg.ndata['v'].shape[0], self.F, 3))
                 A_graph, geo_A, Ap, A_cg, geo_A_cg = A_graph.to('cuda:0'), geo_A.to('cuda:0'), Ap.to('cuda:0'), A_cg.to('cuda:0'), geo_A_cg.to('cuda:0')
@@ -363,6 +398,8 @@ if __name__ == "__main__":
     coarsenConf = CoarsenConf(name = "sbdd_pdpb_parallel", save_dir = '/data/dreidenbach/data/sbdd')
     # results = coarsenConf.generate(smiles_dict)
     # import ipdb; ipdb.set_trace()
+    coarsenConf.load_data(1000)
     results = coarsenConf.generate_parallel(smiles_dict)
     print("Done")
     import ipdb; ipdb.set_trace()
+    

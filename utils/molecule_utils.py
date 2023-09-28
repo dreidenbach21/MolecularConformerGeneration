@@ -255,13 +255,14 @@ def get_torsion_angles(mol):
         )
     return torsions_list
 
-def coarsen_molecule(m, use_diffusion_angle_def = False):
+def coarsen_molecule_new(m):
     m = Chem.AddHs(m) #the GEOM dataset molecules have H's
-    if not use_diffusion_angle_def:
-        torsions = get_torsions_geo([m])
-    else:
-        assert(1 == 0)
-        torsions = get_torsion_angles(m)
+    # if not use_diffusion_angle_def:
+    torsions = get_torsions_geo([m])
+    #  angles = [(a,b,c,d, rdMolTransforms.GetDihedralRad(mol.GetConformer()), a, b, c, d) for a,b,c,d in torsions] # GetDihedralRad GetDihedralDeg
+    # else:
+    #     assert(1 == 0)
+    #     torsions = get_torsion_angles(m)
     #print("Torsion Angles", torsions)
     if len(torsions) > 0:
         bond_break = [(b,c) for a,b,c,d in torsions]
@@ -296,10 +297,54 @@ def coarsen_molecule(m, use_diffusion_angle_def = False):
         for b,c in bond_break:
             bond_break_map[b].append(c)
             bond_break_map[c].append(b)
-        # # : trace
-        # for _test in frag_ids:
-        #     if -1 in _test:
-        #         import ipdb; ipdb.set_trace()
+
+        return torsions, list(frags), frag_ids, adj, out, bond_break_map, cg_bonds, cg_map
+    else:
+        return torsions, [m], [list(range(m.GetNumAtoms()))], Chem.rdmolops.GetAdjacencyMatrix(m), m, [], None, None
+    
+def coarsen_molecule(m, use_diffusion_angle_def = False):
+    m = Chem.AddHs(m) #the GEOM dataset molecules have H's
+    # if not use_diffusion_angle_def:
+    torsions = get_torsions_geo([m])
+    #  angles = [(a,b,c,d, rdMolTransforms.GetDihedralRad(mol.GetConformer()), a, b, c, d) for a,b,c,d in torsions] # GetDihedralRad GetDihedralDeg
+    # else:
+    #     assert(1 == 0)
+    #     torsions = get_torsion_angles(m)
+    #print("Torsion Angles", torsions)
+    if len(torsions) > 0:
+        bond_break = [(b,c) for a,b,c,d in torsions]
+        adj = Chem.rdmolops.GetAdjacencyMatrix(m)
+        for r,c in bond_break:
+            adj[r][c] = 0
+            adj[c][r] = 0
+        out = Chem.rdmolops.FragmentOnBonds(m,
+                                        [m.GetBondBetweenAtoms(b[0], b[1]).GetIdx() for b in bond_break],
+                                        addDummies=False) # determines fake bonds which adds fake atoms
+        frags = Chem.GetMolFrags(out, asMols=True)
+        frag_ids = Chem.GetMolFrags(out, asMols=False) #fragsMolAtomMapping = []
+        frag_ids = [set(x) for x in frag_ids]
+        cg_bonds = []
+        cg_map = defaultdict(list)
+        for start, end in bond_break:
+            a = min(start, end)
+            b = max(start, end)
+            A, B = -1, -1
+            for i, bead in enumerate(frag_ids):
+                if a in bead:
+                    A = i
+                elif b in bead:
+                    B = i
+                if A > 0 and B > 0:
+                    break
+            cg_map[A].append(B)
+            cg_map[B].append(A)
+            cg_bonds.append((min(A,B), max(A,B)))
+        
+        bond_break_map = defaultdict(list) # TODO can expand to torsion info as well
+        for b,c in bond_break:
+            bond_break_map[b].append(c)
+            bond_break_map[c].append(b)
+
         return list(frags), frag_ids, adj, out, bond_break_map, cg_bonds, cg_map
     else:
         return [m], [list(range(m.GetNumAtoms()))], Chem.rdmolops.GetAdjacencyMatrix(m), m, [], None, None

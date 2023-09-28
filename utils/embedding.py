@@ -273,8 +273,9 @@ def get_lig_structure_graph(lig):
 
     return graph, torch.tensor(mask, dtype=bool), torch.tensor(angles, dtype=torch.float32)
 
-def get_geometry_graph(lig): # 2 Hop Distances
-    coords = lig.GetConformer().GetPositions()
+def get_geometry_graph(lig, coords = None): # 2 Hop Distances
+    if coords is None:
+        coords = lig.GetConformer().GetPositions()
     #print("Make Geo", coords)
     coords -= np.mean(coords, axis = 0)
     #print("Make Geo remove mean", coords)

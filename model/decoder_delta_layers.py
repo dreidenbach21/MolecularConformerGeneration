@@ -376,6 +376,7 @@ class IEGMN_Bidirectional_Delta_Layer(nn.Module):
         
     def forward(self, A_graph, B_graph, coords_A, h_feats_A, original_A_node_features, orig_coords_A,
                 coords_B, h_feats_B, original_B_node_features, orig_coords_B, mask, geometry_graph_A = None, geometry_graph_B = None, mpnn_only = False):
+        # import ipdb; ipdb.set_trace()
         if mpnn_only or B_graph is None: return self.single_forward(A_graph, coords_A, h_feats_A, original_A_node_features, orig_coords_A, geometry_graph_A, mask)
         with A_graph.local_scope() and B_graph.local_scope():
             if self.feature_mixing:
@@ -612,7 +613,7 @@ class IEGMN_Bidirectional_Delta(nn.Module):
             if teacher_forcing:
                 orig_coords_B = B_graph.ndata['x_true']
             else:
-                orig_coords_B = B_graph.ndata['x_cc']
+                orig_coords_B = B_graph.ndata['x_ref']
 
         coords_A = A_graph.ndata['x_cc']
         if mpnn_only:
@@ -621,7 +622,7 @@ class IEGMN_Bidirectional_Delta(nn.Module):
             if teacher_forcing:
                 coords_B = B_graph.ndata['x_true']
             else:
-                coords_B = B_graph.ndata['x_cc']
+                coords_B = B_graph.ndata['x_ref'] # B uses RDKIT
 
         # h_feats_A = self.atom_embedder(A_graph.ndata['feat']) # SHould already be in D dim
         # h_feats_B = self.atom_embedder(B_graph.ndata['feat'])
@@ -632,7 +633,7 @@ class IEGMN_Bidirectional_Delta(nn.Module):
             if teacher_forcing:
                 h_feats_B = atom_embedder(B_graph.ndata['ref_feat'])
             else:
-                h_feats_B = B_graph.ndata['feat_cc']
+                h_feats_B = atom_embedder(B_graph.ndata['ref_feat'])
         # ipdb.set_trace()
         # print("[DEC Outer start] forward input Coords A", torch.min(coords_A).item(), torch.max(coords_A).item())
         # if not mpnn_only:
@@ -671,7 +672,7 @@ class IEGMN_Bidirectional_Delta(nn.Module):
         #         'max and norm of h_feats_A before layers but after noise and mu_r_norm')
         #     log(torch.max(h_feats_B.abs()), torch.norm(h_feats_A),
         #         'max and norm of h_feats_B before layers but after noise and mu_r_norm')
-
+        # import ipdb; ipdb.set_trace()
         original_A_node_features = h_feats_A
         original_B_node_features = h_feats_B
         A_graph.edata['feat'] *= self.use_edge_features_in_gmn
@@ -715,7 +716,7 @@ class IEGMN_Bidirectional_Delta(nn.Module):
             #     # print("Distance blow up")
             # geom_losses = geom_losses + geom_loss
             # full_trajectory.extend(trajectory)
-        return coords_A, h_feats_A, coords_B, h_feats_B, geom_losses, None #full_trajectory
+        return coords_A, h_feats_A, coords_B, h_feats_B #, geom_losses, None #full_trajectory
 
     def __repr__(self):
         return "IEGMN " + str(self.__dict__)
