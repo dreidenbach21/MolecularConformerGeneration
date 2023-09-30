@@ -98,8 +98,8 @@ class PabloEscobar():
         # weights = "DRUGS_noar_ot_all_09-22_02-18-40_2" #"DRUGS_noar_one_fifth_ot4_09-21_16-58-11_1.pt"
         weights = "DRUGS_noar_ot_all_post_restart_09-26_23-36-23_2.pt"
         self.mole_name = "CC_DRUGS_testset_ot_" + weights  + suffix
-        self.name = "CC_DRUGS_testset"
-        # self.name = "CC_DRUGS_testset2"
+        # self.name = "CC_DRUGS_testset"
+        self.name = "CC_DRUGS_testset3"
         # self.name = "CC_DRUGS_testset_no_mmff"
         self.no_mmff = False #True
         self.model = model
